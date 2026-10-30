@@ -33,13 +33,18 @@ test('project64 .exe override with mode 0644 is ready via wine on non-win32', { 
     const base = { platform: 'linux', binDir: '/nobin', homedir: '/h' };
     // real fs, real default which() over an injected PATH
     const r = cores.resolveExecutable(pj, { corePaths: { project64: exe } }, { ...base, env: { PATH: wineDir } });
-    assert.deepEqual(r, { status: 'ready', exe, source: 'override' });
+    assert.equal(r.status, 'ready');
+    assert.equal(r.exe, exe);
+    assert.equal(r.source, 'override');
+    assert.equal(r.wine, path.join(wineDir, 'wine'));
+    assert.equal(r.wineSource, 'path');
     // injected which
     const r2 = cores.resolveExecutable(pj, { corePaths: { project64: exe } }, { ...base, env: {}, which: (n) => (n === 'wine' ? '/usr/bin/wine' : null) });
     assert.equal(r2.status, 'ready');
-    // no wine anywhere -> unsupported
+    // no wine anywhere -> missing (not unsupported)
     const r3 = cores.resolveExecutable(pj, { corePaths: { project64: exe } }, { ...base, env: { PATH: path.join(d, 'empty') } });
-    assert.deepEqual(r3, { status: 'unsupported', exe: null, source: null });
+    assert.equal(r3.status, 'missing');
+    assert.equal(r3.wine, null);
   } finally { rm(d); }
 });
 
@@ -48,9 +53,9 @@ test('project64 wine path still requires the override to exist as a regular file
   try {
     const pj = cores.getCore('project64');
     const deps = { platform: 'linux', binDir: '/nobin', homedir: '/h', env: {}, which: () => '/usr/bin/wine' };
-    assert.equal(cores.resolveExecutable(pj, { corePaths: { project64: path.join(d, 'gone.exe') } }, deps).status, 'unsupported');
+    assert.equal(cores.resolveExecutable(pj, { corePaths: { project64: path.join(d, 'gone.exe') } }, deps).status, 'missing');
     fs.mkdirSync(path.join(d, 'dir.exe'));
-    assert.equal(cores.resolveExecutable(pj, { corePaths: { project64: path.join(d, 'dir.exe') } }, deps).status, 'unsupported');
+    assert.equal(cores.resolveExecutable(pj, { corePaths: { project64: path.join(d, 'dir.exe') } }, deps).status, 'missing');
   } finally { rm(d); }
 });
 
@@ -307,4 +312,60 @@ test('store load drops games with relative paths or extension/system mismatch', 
     const games = createStore({ dir }).getLibrary().games;
     assert.deepEqual(games.map((g) => g.id).sort(), ['444444444444', 'abcdef012345']);
   } finally { rm(dir); }
+});
+
+// ---- wine env allowlist in processes.start ----
+async function startWith(env, hostEnv = {}) {
+  const calls = [];
+  const child = fakeChild();
+  const pm = createProcessManager({ spawn: (cmd, args, o) => { calls.push({ cmd, args, o }); return child; } });
+  const saved = {};
+  for (const [k, v] of Object.entries(hostEnv)) { saved[k] = process.env[k]; process.env[k] = v; }
+  try {
+    const p = pm.start({ gameId: 'g', coreId: 'project64', command: 'wine', args: ['/p/Project64.exe', '/r/x.z64'], env });
+    child.emit('spawn');
+    await p;
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+  return calls[0];
+}
+
+test('processes.start passes allowlisted env merged over process.env, shell stays false', async () => {
+  const c = await startWith({ WINEPREFIX: '/ud/wine/project64', WINEDEBUG: '-all', WINEDLLOVERRIDES: 'mscoree,mshtml=' }, { UEMU_TEST_MARKER: 'keep' });
+  assert.equal(c.o.shell, false);
+  assert.equal(c.o.env.WINEPREFIX, '/ud/wine/project64');
+  assert.equal(c.o.env.WINEDEBUG, '-all');
+  assert.equal(c.o.env.WINEDLLOVERRIDES, 'mscoree,mshtml=');
+  assert.equal(c.o.env.UEMU_TEST_MARKER, 'keep'); // inherited env is preserved
+  assert.deepEqual(c.args, ['/p/Project64.exe', '/r/x.z64']);
+});
+
+test('processes.start ignores non-allowlisted env keys and never passes loader-injection vars', async () => {
+  const c = await startWith(
+    { WINEDEBUG: '-all', LD_PRELOAD: '/evil.so', DYLD_INSERT_LIBRARIES: '/evil.dylib', PATH: '/evil', WINELOADER: '/evil' },
+    { LD_PRELOAD: '/inherited.so', DYLD_INSERT_LIBRARIES: '/inherited.dylib' },
+  );
+  assert.equal(c.o.env.WINEDEBUG, '-all');
+  assert.notEqual(c.o.env.PATH, '/evil');
+  assert.notEqual(c.o.env.LD_PRELOAD, '/evil.so');
+  assert.notEqual(c.o.env.DYLD_INSERT_LIBRARIES, '/evil.dylib');
+  assert.notEqual(c.o.env.WINELOADER, '/evil');
+  // inherited loader vars are stripped for env-carrying wine launches
+  assert.equal(c.o.env.LD_PRELOAD, undefined);
+  assert.equal(c.o.env.DYLD_INSERT_LIBRARIES, undefined);
+});
+
+test('processes.start without env (or with only bad keys) leaves the child env untouched', async () => {
+  assert.equal((await startWith(undefined)).o.env, undefined);
+  assert.equal((await startWith({ LD_PRELOAD: '/evil.so' })).o.env, undefined);
+});
+
+test('processes.start rejects non-string / NUL / non-object env values without spawning', async () => {
+  for (const env of [{ WINEPREFIX: 5 }, { WINEPREFIX: 'a\0b' }, { WINEDEBUG: null }, { WINEDLLOVERRIDES: {} }, ['x'], 'x']) {
+    let spawned = 0;
+    const pm = createProcessManager({ spawn: () => { spawned++; return fakeChild(); } });
+    await assert.rejects(pm.start({ gameId: 'g', coreId: 'project64', command: 'wine', args: [], env }), /Could not start|env/i, JSON.stringify(env));
+    assert.equal(spawned, 0);
+  }
 });

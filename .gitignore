@@ -9,3 +9,4 @@ out/
 # tooling
 graphify-out/
 .claude/agent-memory/
+.dev-profile/

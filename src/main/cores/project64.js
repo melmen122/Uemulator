@@ -3,8 +3,13 @@
 // ParseCommand() (line ~174): accepts only --help, --combo <file> and the ROM path as the LAST
 // positional argument. There is no fullscreen flag, so opts.fullscreen is ignored.
 // Windows build output: Bin/<Platform>/<Configuration>/Project64.exe (PropertySheets/Platform.props).
-// Windows only; on other platforms the exe is run through `wine` when a .exe is configured.
+// Windows: runs the exe directly. macOS/Linux: Project64.exe (user-supplied) is run through a Wine
+// runtime (bundled at bin/wine/bin/wine by `npm run build:cores -- project64` on macOS, also linked at
+// <userData>/runtime/wine for the packaged app, else `wine` on PATH).
 const nodePath = require('path');
+
+// Env the launcher may set for the wine process; processes.js enforces the same allowlist.
+const WINE_ENV = Object.freeze({ WINEDEBUG: '-all', WINEDLLOVERRIDES: 'mscoree,mshtml=' });
 
 function pathFor(platform) { return platform === 'win32' ? nodePath.win32 : nodePath.posix; }
 
@@ -12,9 +17,11 @@ module.exports = {
   id: 'project64',
   name: 'Project64',
   systems: ['n64'],
-  platforms: ['win32'],
-  // Non-win32 hosts may run Project64.exe via wine (see cores/index.js resolveExecutable).
+  platforms: ['win32', 'darwin'],
+  // darwin/linux run Project64.exe via wine (see cores/index.js resolveExecutable).
   wine: true,
+  // Wine binary lookup (non-win32): built runtime first, then these names on PATH.
+  winePathNames: ['wine', 'wine64'],
   homepage: 'https://www.pj64-emu.com',
   license: 'GPL-2.0',
   pathNames: [],
@@ -33,7 +40,20 @@ module.exports = {
     return out;
   },
 
-  /** opts: { exe, platform? (default process.platform) } */
+  /**
+   * Absolute paths of a bundled wine binary (Gcenx layout: <root>/bin/wine), in priority order:
+   * the built runtime under binDir (dev), then <userDataDir>/runtime/wine (stable location that also works in
+   * the packaged app, where binDir sits inside app.asar; build-cores symlinks it to the repo's bin/wine).
+   */
+  wineCandidates(ctx) {
+    const { binDir, userDataDir } = ctx;
+    const out = [];
+    if (binDir) out.push(nodePath.posix.join(binDir, 'wine', 'bin', 'wine'));
+    if (userDataDir) out.push(nodePath.posix.join(userDataDir, 'runtime', 'wine', 'bin', 'wine'));
+    return out;
+  },
+
+  /** opts: { exe, platform? (default process.platform), wine?, prefixDir? } */
   buildArgs(romPath, opts = {}) {
     if (typeof romPath !== 'string' || romPath.length === 0 || romPath.includes('\0')) {
       throw new Error('Invalid ROM path');
@@ -43,7 +63,18 @@ module.exports = {
     const platform = opts.platform || process.platform;
     if (platform !== 'win32') {
       if (!/\.exe$/i.test(exe)) throw new Error('Project64 is only supported on Windows (or via wine with a Project64.exe)');
-      return { command: 'wine', args: [exe, romPath] };
+      const wine = opts.wine === undefined || opts.wine === null ? 'wine' : opts.wine;
+      if (typeof wine !== 'string' || wine.length === 0 || wine.includes('\0')) throw new Error('Invalid wine path');
+      const env = {};
+      if (opts.prefixDir !== undefined && opts.prefixDir !== null) {
+        if (typeof opts.prefixDir !== 'string' || opts.prefixDir.length === 0 || opts.prefixDir.includes('\0')) {
+          throw new Error('Invalid wine prefix path');
+        }
+        env.WINEPREFIX = opts.prefixDir;
+      }
+      Object.assign(env, WINE_ENV);
+      // exe and ROM are separate argv elements (no shell); the ROM stays the last positional argument.
+      return { command: wine, args: [exe, romPath], env };
     }
     return { command: exe, args: [romPath] };
   },

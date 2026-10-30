@@ -61,26 +61,85 @@ test('candidates beat which', () => {
   assert.equal(r.source, 'system');
 });
 
-test('project64 on darwin is unsupported without a configured exe', () => {
-  const pj = getCore('project64');
-  assert.deepEqual(resolveExecutable(pj, {}, mkDeps([])), { status: 'unsupported', exe: null, source: null });
-  // .exe override but no wine -> still unsupported
-  const r = resolveExecutable(pj, { corePaths: { project64: '/x/Project64.exe' } }, mkDeps(['/x/Project64.exe']));
-  assert.equal(r.status, 'unsupported');
+const PJ = '/x/Project64.exe';
+const wineOnPath = (n) => (n === 'wine' ? '/usr/bin/wine' : null);
+
+test('project64 on darwin: nothing present is missing (not unsupported)', () => {
+  const r = resolveExecutable(getCore('project64'), {}, mkDeps([]));
+  assert.equal(r.status, 'missing');
+  assert.equal(r.exe, null);
+  assert.equal(r.wine, null);
 });
 
-test('project64 on darwin with wine + .exe override is ready', () => {
+test('project64 on darwin: exe without wine is missing; wine without exe is missing', () => {
   const pj = getCore('project64');
-  const r = resolveExecutable(pj, { corePaths: { project64: '/x/Project64.exe' } },
-    mkDeps(['/x/Project64.exe'], { which: (n) => (n === 'wine' ? '/usr/bin/wine' : null) }));
-  assert.deepEqual(r, { status: 'ready', exe: '/x/Project64.exe', source: 'override' });
+  const a = resolveExecutable(pj, { corePaths: { project64: PJ } }, mkDeps([PJ]));
+  assert.equal(a.status, 'missing');
+  assert.equal(a.wine, null);
+  const b = resolveExecutable(pj, {}, mkDeps([], { which: wineOnPath }));
+  assert.equal(b.status, 'missing');
+  assert.equal(b.wine, '/usr/bin/wine');
+  assert.equal(b.exe, null);
 });
 
-test('project64 with non-.exe override on darwin stays unsupported even with wine', () => {
-  const pj = getCore('project64');
-  const r = resolveExecutable(pj, { corePaths: { project64: '/x/pj64' } },
+test('project64 on darwin with PATH wine + .exe override is ready and reports wine', () => {
+  const r = resolveExecutable(getCore('project64'), { corePaths: { project64: PJ } }, mkDeps([PJ], { which: wineOnPath }));
+  assert.equal(r.status, 'ready');
+  assert.equal(r.exe, PJ);
+  assert.equal(r.source, 'override');
+  assert.equal(r.wine, '/usr/bin/wine');
+  assert.equal(r.wineSource, 'path');
+});
+
+test('project64 wine64 on PATH is accepted', () => {
+  const r = resolveExecutable(getCore('project64'), { corePaths: { project64: PJ } },
+    mkDeps([PJ], { which: (n) => (n === 'wine64' ? '/opt/wine64' : null) }));
+  assert.equal(r.status, 'ready');
+  assert.equal(r.wine, '/opt/wine64');
+});
+
+test('project64: built bin/wine is preferred over PATH wine', () => {
+  const built = `${BIN}/wine/bin/wine`;
+  const r = resolveExecutable(getCore('project64'), { corePaths: { project64: PJ } },
+    mkDeps([PJ, built], { which: wineOnPath }));
+  assert.equal(r.status, 'ready');
+  assert.equal(r.wine, built);
+  assert.equal(r.wineSource, 'built');
+});
+
+test('project64: non-.exe override is not accepted even with wine', () => {
+  const r = resolveExecutable(getCore('project64'), { corePaths: { project64: '/x/pj64' } },
     mkDeps(['/x/pj64'], { which: () => '/usr/bin/wine' }));
-  assert.equal(r.status, 'unsupported');
+  assert.equal(r.status, 'missing');
+  assert.equal(r.exe, null);
+});
+
+test('project64: .exe check is case-insensitive and statSync (not X_OK) decides regular file', () => {
+  const st = (files, dirs = []) => (p) => {
+    if (files.includes(p)) return { isFile: () => true };
+    if (dirs.includes(p)) return { isFile: () => false };
+    throw new Error('ENOENT');
+  };
+  const pj = getCore('project64');
+  const deps = (statSync) => ({ statSync, existsSync: () => false, platform: 'darwin', which: wineOnPath, binDir: BIN, homedir: '/h', env: {} });
+  assert.equal(resolveExecutable(pj, { corePaths: { project64: '/x/PROJECT64.EXE' } }, deps(st(['/x/PROJECT64.EXE']))).status, 'ready');
+  assert.equal(resolveExecutable(pj, { corePaths: { project64: '/x/dir.exe' } }, deps(st([], ['/x/dir.exe']))).status, 'missing');
+  assert.equal(resolveExecutable(pj, { corePaths: { project64: '/x/gone.exe' } }, deps(st([]))).status, 'missing');
+});
+
+test('project64 on linux behaves like darwin; other platforms are unsupported', () => {
+  const pj = getCore('project64');
+  const r = resolveExecutable(pj, { corePaths: { project64: PJ } }, mkDeps([PJ], { platform: 'linux', which: wineOnPath }));
+  assert.equal(r.status, 'ready');
+  assert.deepEqual(resolveExecutable(pj, {}, mkDeps([], { platform: 'freebsd' })), { status: 'unsupported', exe: null, source: null });
+  assert.equal(resolveExecutable(pj, { corePaths: { project64: PJ } }, mkDeps([PJ], { platform: 'freebsd', which: wineOnPath })).status, 'unsupported');
+});
+
+test('native core at 0644 is still not ready (regular-file rule is wine-only)', () => {
+  const r = resolveExecutable(mgba, { corePaths: { mgba: '/my/mgba' } }, {
+    statSync: () => ({ isFile: () => true }), existsSync: () => false, platform: 'darwin', which: () => null, binDir: BIN, homedir: '/h', env: {},
+  });
+  assert.equal(r.status, 'missing');
 });
 
 test('project64 on win32 resolves built bin', () => {

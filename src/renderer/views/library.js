@@ -111,7 +111,7 @@ export function createLibraryView() {
     h('div', { class: 'card-body' },
       h('h3', { class: 'card-title', title: game.title }, game.title),
       reason
-        ? h('p', { class: 'card-meta card-warn' }, core ? `${core.name} ${core.status === 'unsupported' ? 'unsupported here' : 'not installed'}` : 'No emulator')
+        ? h('p', { class: 'card-meta card-warn' }, core ? `${core.name} ${core.status === 'unsupported' ? 'unsupported here' : core.id === 'project64' ? 'not set up' : 'not installed'}` : 'No emulator')
         : h('p', { class: 'card-meta' }, meta || '\u00a0'),
       h('div', { class: 'card-foot' },
         h('span', { class: 'badge sys-badge' }, sys.short),

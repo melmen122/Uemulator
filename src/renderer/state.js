@@ -82,11 +82,8 @@ export function launchBlockReason(game) {
   const core = coreForGame(game);
   if (!core) return `No emulator is configured for ${(SYSTEMS[game.system] || {}).name || game.system}.`;
   if (core.status === 'ready') return null;
-  if (core.status === 'unsupported') {
-    return core.id === 'project64'
-      ? `${core.name} isn't supported on this OS. It needs Wine and a Project64.exe path in Cores.`
-      : `${core.name} isn't supported on this OS.`;
-  }
+  if (core.status === 'unsupported') return `${core.name} isn't supported on this OS.`;
+  if (core.id === 'project64') return `${core.name} isn't set up — see Cores.`;
   return `${core.name} isn't installed — set its path in Cores.`;
 }
 

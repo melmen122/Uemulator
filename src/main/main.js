@@ -85,7 +85,9 @@ if (!app.requestSingleInstanceLock()) {
       dialog,
       shell,
       getWindow: () => mainWindow || undefined,
-      resolveDeps: { binDir: path.join(app.getAppPath(), 'bin') },
+      userDataDir: app.getPath('userData'),
+      // binDir is only populated in dev (inside app.asar when packaged); userDataDir hosts the wine runtime link.
+      resolveDeps: { binDir: path.join(app.getAppPath(), 'bin'), userDataDir: app.getPath('userData') },
     });
     createWindow();
     app.on('activate', () => {

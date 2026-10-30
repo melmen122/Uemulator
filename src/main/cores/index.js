@@ -64,12 +64,64 @@ function isInside(dir, file, P) {
   return rel !== '' && !rel.startsWith('..') && !P.isAbsolute(rel);
 }
 
+/** Hints surfaced as `detail` when a wine-run core is not ready. */
+const WINE_MISSING_DETAIL = 'Wine runtime not installed \u2014 run: npm run build:cores -- project64 (it also links the runtime into the app data folder)';
+const WINE_MISSING_DETAIL_LINUX = 'Wine not found \u2014 install it with your package manager (e.g. sudo apt install wine)';
+const EXE_MISSING_DETAIL = 'Set the path to Project64.exe';
+
+/**
+ * Wine-run core on darwin/linux. The .exe comes from the override (or the core's candidates) and only
+ * has to be a regular file ending in .exe. A wine binary is looked up as the built runtime (binDir), the
+ * userData runtime link, then PATH.
+ * @returns {{status:'ready'|'missing', exe:string|null, source:string|null, wine:string|null, wineSource:'built'|'runtime'|'path'|null, detail?:string}}
+ */
+function resolveWineCore(core, c) {
+  let exe = null;
+  let source = null;
+  if (c.hasOverride && /\.exe$/i.test(c.override) && c.isRegular(c.override)) {
+    exe = c.override;
+    source = 'override';
+  } else {
+    for (const candidate of core.candidates({ platform: c.platform, binDir: c.binDir, homedir: c.homedir, env: c.env })) {
+      if (/\.exe$/i.test(candidate) && c.isRegular(candidate)) {
+        exe = candidate;
+        source = isInside(c.binDir, candidate, c.P) ? 'built' : 'system';
+        break;
+      }
+    }
+  }
+
+  let wine = null;
+  let wineSource = null;
+  const wineCandidates = typeof core.wineCandidates === 'function'
+    ? core.wineCandidates({ platform: c.platform, binDir: c.binDir, userDataDir: c.userDataDir, homedir: c.homedir, env: c.env }) : [];
+  for (const candidate of wineCandidates) {
+    if (c.existsSync(candidate)) {
+      wine = candidate;
+      wineSource = isInside(c.binDir, candidate, c.P) ? 'built' : 'runtime';
+      break;
+    }
+  }
+  if (!wine) {
+    for (const name of core.winePathNames || ['wine', 'wine64']) {
+      const found = c.which(name);
+      if (found) { wine = found; wineSource = 'path'; break; }
+    }
+  }
+
+  const ready = !!exe && !!wine;
+  const out = { status: ready ? 'ready' : 'missing', exe, source, wine, wineSource };
+  if (!ready) out.detail = [wine ? null : (c.platform === 'linux' ? WINE_MISSING_DETAIL_LINUX : WINE_MISSING_DETAIL), exe ? null : EXE_MISSING_DETAIL].filter(Boolean).join('. ');
+  return out;
+}
+
 /**
  * Resolve a core's executable: override -> candidates -> PATH.
  * @param {object} core adapter
  * @param {{corePaths?: Record<string,string|null>}} settings
- * @param {{existsSync?:Function, statSync?:Function, platform?:string, which?:Function, binDir?:string, homedir?:string, env?:object}} deps
- * @returns {{status:'ready'|'missing'|'unsupported', exe:string|null, source:'override'|'built'|'system'|'path'|null}}
+ * @param {{existsSync?:Function, statSync?:Function, platform?:string, which?:Function, binDir?:string, userDataDir?:string, homedir?:string, env?:object}} deps
+ * @returns {{status:'ready'|'missing'|'unsupported', exe:string|null, source:'override'|'built'|'system'|'path'|null, wine?:string|null, wineSource?:'built'|'runtime'|'path'|null, detail?:string}}
+ *   `wine`/`wineSource`/`detail` are only present for wine-run cores (Project64 on darwin/linux).
  */
 function resolveExecutable(core, settings = {}, deps = {}) {
   const platform = deps.platform || process.platform;
@@ -77,6 +129,7 @@ function resolveExecutable(core, settings = {}, deps = {}) {
   const env = deps.env || process.env;
   const binDir = deps.binDir === undefined ? DEFAULT_BIN_DIR : deps.binDir;
   const homedir = deps.homedir === undefined ? os.homedir() : deps.homedir;
+  const userDataDir = typeof deps.userDataDir === 'string' && deps.userDataDir.length > 0 ? deps.userDataDir : undefined;
   // Wine-run .exe files are never chmod +x: only require a regular file (not X_OK).
   const isRegular = typeof deps.statSync === 'function'
     ? (p) => { try { return !!deps.statSync(p).isFile(); } catch { return false; } }
@@ -87,11 +140,13 @@ function resolveExecutable(core, settings = {}, deps = {}) {
   const override = settings && settings.corePaths ? settings.corePaths[core.id] : null;
   const hasOverride = typeof override === 'string' && override.length > 0;
 
+  // Wine-run cores (Project64): on darwin/linux the .exe is user-supplied and a wine binary is also required.
+  if (core.wine && platform !== 'win32') {
+    if (platform !== 'darwin' && platform !== 'linux') return { status: 'unsupported', exe: null, source: null };
+    return resolveWineCore(core, { hasOverride, override, isRegular, existsSync, which, platform, binDir, userDataDir, homedir, env, P });
+  }
+
   if (!core.platforms.includes(platform)) {
-    // Windows-only core: allow wine on other hosts when a Project64.exe has been configured.
-    if (core.wine && hasOverride && /\.exe$/i.test(override) && isRegular(override) && which('wine')) {
-      return { status: 'ready', exe: override, source: 'override' };
-    }
     return { status: 'unsupported', exe: null, source: null };
   }
 
@@ -116,7 +171,7 @@ function resolveExecutable(core, settings = {}, deps = {}) {
 /** Renderer-facing description of a core (plan.md §3.3 `cores:list`). */
 function describeCore(core, settings, deps) {
   const r = resolveExecutable(core, settings, deps);
-  return {
+  const view = {
     id: core.id,
     name: core.name,
     systems: core.systems.slice(),
@@ -126,6 +181,8 @@ function describeCore(core, settings, deps) {
     homepage: core.homepage,
     license: core.license,
   };
+  if (r.detail) view.detail = r.detail;
+  return view;
 }
 
 module.exports = { CORES, DEFAULT_BIN_DIR, getCore, listCores, resolveExecutable, describeCore, defaultWhich, isExecutableFile };

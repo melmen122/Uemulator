@@ -9,7 +9,7 @@ process with live logs and a Stop button. Each emulator is an unmodified git sub
 
 | System | Extensions | Core | Upstream | License |
 |---|---|---|---|---|
-| Nintendo 64 | `.z64` `.n64` `.v64` | Project64 | https://github.com/project64/project64 | GPL-2.0 |
+| Nintendo 64 | `.z64` `.n64` `.v64` | Project64 (macOS via Wine) | https://github.com/project64/project64 | GPL-2.0 |
 | Nintendo Switch | `.nsp` `.xci` `.nca` `.nro` | Ryujinx (Ryubing) | https://git.ryujinx.app/ryubing/ryujinx | MIT |
 | Nintendo 3DS | `.3ds` `.cci` `.cxi` `.cia` `.3dsx` `.app` | Azahar | https://github.com/azahar-emu/azahar | GPL-2.0 |
 | Game Boy Advance | `.gba` | mGBA | https://github.com/mgba-emu/mgba | MPL-2.0 |
@@ -57,8 +57,16 @@ For each core, Uemulator uses the first match:
    `/usr/bin`, or `%ProgramFiles%` on Windows.
 4. **PATH** lookup by name, for example `mgba-qt`, `mgba`, `pyboy`, `azahar`, `Ryujinx`, `rpcs3`.
 
-Project64 is Windows-only. On macOS and Linux it runs through `wine`, but only when `wine` is on
-PATH and a `Project64.exe` is set as the override.
+Project64 has no macOS or Linux build. On macOS and Linux, Uemulator runs the `Project64.exe` you set
+as the override through Wine. The Wine binary is the first match from:
+
+- `bin/wine/bin/wine`, installed by `npm run build:cores -- project64` on macOS
+- `<userData>/runtime/wine/bin/wine`, the link that same step creates for the installed app
+- `wine` or `wine64` on PATH (the usual choice on Linux)
+
+Project64 is ready only when both a Wine binary and the `.exe` are found. Otherwise the Cores page
+shows Not installed with the reason. On macOS, `Project64.exe` is never auto-detected. Set it with
+Set path….
 
 ## Building cores
 
@@ -77,11 +85,28 @@ skip that core. Real build failures exit with code 1.
 | `pyboy` | `bin/pyboy/venv/` | Python 3.9+ (`python3`, or `python` / `py` on Windows), a C compiler for the Cython extension. |
 | `azahar` | `bin/azahar/` | `git`, `cmake`. Qt 6, SDL2 and a C++20 compiler are needed (the script only checks `cmake`). |
 | `ryujinx` | `bin/ryujinx/` | .NET SDK 10 or newer. The version comes from `cores/ryujinx/global.json`. |
-| `project64` | `bin/project64/` | Windows only: `git`, MSBuild (Visual Studio 2019 or newer). |
+| `project64` | `bin/project64/` (Windows), `bin/wine/` (macOS) | Windows: `git`, MSBuild (Visual Studio 2019 or newer). macOS: Rosetta 2 on Apple Silicon, `tar`, `curl`. Linux: not built here. Install `wine` from your package manager. |
 | `rpcs3` | `bin/rpcs3/` | `git`, `cmake` 3.28+, Qt 6.7+ (Widgets, Multimedia, Svg), SDL3, Vulkan, LLVM (system LLVM on macOS/Linux; built from the submodule on Windows), Clang 19+ or GCC 13+. Windows needs Visual Studio 2022 and the Vulkan SDK (`VULKAN_SDK`). `ninja` is needed on macOS and Linux. Upstream officially supports Windows and Linux. The macOS path is best-effort and has not been run here. |
 
 The script prints the install command for each missing tool (for example `brew install cmake qt
 sdl2` on macOS). Build directories live in `bin/.build/`, and nothing under `cores/` is edited.
+
+### Project64 on macOS
+
+Project64 has no macOS build, so Uemulator runs the Windows `Project64.exe` through Wine.
+
+1. Install Rosetta 2 (Apple Silicon only): `softwareupdate --install-rosetta --agree-to-license`
+2. Install the Wine runtime: `npm run build:cores -- project64`. It downloads Wine 11.18 (Gcenx
+   `macOS_Wine_builds`, x86_64, about 190 MB), checks its SHA-256 before extracting, and puts it in
+   `bin/wine/`. It also links the runtime at `~/Library/Application Support/uemulator/runtime/wine`
+   so the installed app can find it. Re-running the command skips the download if Wine already works.
+3. Download `Project64.exe` from https://www.pj64-emu.com.
+4. In Uemulator, open Cores → Project64 → Set path… and choose `Project64.exe`. The status becomes Ready.
+
+The first game launch takes about 30 seconds while Wine creates its prefix. The Wine pin (version,
+URL and SHA-256) is the same pinned Wine build that neutron uses (OmniTroid/neutron, BSD-3-Clause,
+https://github.com/OmniTroid/neutron).
+Uemulator downloads the Gcenx build itself. It does not use neutron's Steam bridge or DXMT.
 
 ## Where data is stored
 
@@ -91,6 +116,8 @@ sdl2` on macOS). Build directories live in `bin/.build/`, and nothing under `cor
 - Writes go to a `.tmp` file that is then renamed over the old one. If the file is not valid JSON,
   it is renamed to `uemulator.json.corrupt` and defaults are used.
 - Built cores live in `bin/` (gitignored).
+- Wine prefixes live in `<userData>/wine/<coreId>/`. Project64 is the only Wine-run core, so this is
+  `~/Library/Application Support/uemulator/wine/project64/` on macOS. Uemulator creates it with mode 0700.
 
 ## Keyboard shortcuts
 
@@ -111,7 +138,7 @@ the button on the Running panel.
 ## Development
 
 ```sh
-npm test          # node --test "tests/**/*.test.js" (134 unit tests)
+npm test          # node --test "tests/**/*.test.js" (193 unit tests)
 npm start         # run the app
 npm run dist      # electron-builder packaging
 ```
@@ -146,6 +173,9 @@ plan.md          architecture and contracts
   Executables come only from the resolution order above.
 - Emulators are started with `spawn(cmd, args, { shell: false })`. Stop sends SIGTERM and falls back
   to SIGKILL after 5 seconds. Running games are stopped when the app quits.
+- Only the Wine launch sets environment variables, and only `WINEPREFIX`, `WINEDEBUG` and
+  `WINEDLLOVERRIDES` (an allowlist in `processes.js`). The child inherits the app's environment
+  without `WINELOADER`, `DYLD_*` or `LD_*`. The renderer cannot set any of these.
 
 ## Known limitations
 
@@ -154,5 +184,17 @@ plan.md          architecture and contracts
 - No prebuilt core installer. Cores must be built locally or installed by hand.
 - Build paths for cmake, .NET and RPCS3 are untested on the development machine. None of the six
   emulators is installed there, so real-emulator launches are untested.
+- Project64 on macOS runs under Wine and Rosetta 2. Only the Wine runtime has been checked here
+  (`wine --version` and a `cmd /c ver` smoke test). Project64 itself has not been run under Wine in
+  this repo.
+- The first Project64 launch is slow (about 30 seconds) while Wine creates its prefix.
+- The ROM path is passed to Wine as a raw Unix path. Paths that Wine cannot map are untested.
+- Project64 does not open ROMs whose file names contain non-ASCII characters (e.g. "Pokémon"). It
+  reads its command-line arguments as ANSI and then decodes them as UTF-8 (`cores/project64`
+  `Source/Project64/main.cpp:12` and `Source/Common/File.cpp:126`). A `?` in a file name is also
+  treated as a 7z sub-file separator (`Source/Project64-core/N64System/N64Rom.cpp:573`). This applies
+  to Project64 on Windows too. Workaround: rename the ROM with ASCII-only characters.
+- The packaged app finds the Wine runtime only through the app data link. Other cores' repo-built
+  binaries in `bin/<id>/` are found only by `npm start` and by system install locations.
 - Licenses: each core keeps its own license (see table above). Uemulator is a launcher that starts
   those programs as separate processes. Check each core's license before you redistribute builds.

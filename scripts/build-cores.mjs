@@ -5,6 +5,7 @@
 // Exception: azahar/project64/rpcs3 need their nested submodules initialised inside cores/<id>.
 // All processes are started with spawnSync(cmd, [args]) and no shell.
 import { spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,12 +18,28 @@ const BUILD_DIR = path.join(BIN_DIR, '.build');
 const PLATFORM = process.platform; // darwin | linux | win32
 const ALL_CORES = ['mgba', 'pyboy', 'project64', 'azahar', 'ryujinx', 'rpcs3'];
 
+// Wine runtime used to run the Windows Project64.exe on macOS (Project64 has no native macOS build).
+// Pinned like OmniTroid/neutron (BSD-3-Clause, https://github.com/OmniTroid/neutron, versions.env):
+// prebuilt x86_64 macOS Wine from Gcenx; runs under Rosetta 2 on Apple Silicon.
+const WINE_VERSION = '11.18';
+const WINE_BIN_URL = 'https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.18/wine-devel-11.18-osx64.tar.xz';
+const WINE_BIN_SHA256 = 'aa0ea4c82e636ae7bca2076387cb0a5affa26509ad13f119ecd0d62bd7ba6f82';
+const WINE_DL_DIR = path.join(BUILD_DIR, 'wine-dl');
+const WINE_UNPACK_DIR = path.join(BUILD_DIR, 'wine-unpack');
+const WINE_OUT_DIR = path.join(BIN_DIR, 'wine');
+const ROSETTA_PATH = '/Library/Apple/usr/share/rosetta/rosetta';
+
 const USAGE = `Usage: node scripts/build-cores.mjs [options] [coreId...]
 
 Builds emulator cores from cores/<id> into bin/<id>/. With no core ids, all cores are attempted.
 A missing toolchain prints install hints and skips that core; the others still build.
 
 Cores: ${ALL_CORES.join(', ')}
+
+project64 on macOS: Project64 is Windows-only, so this step installs a Wine runtime into bin/wine/
+(Gcenx wine-devel ${WINE_VERSION}, x86_64, ~190 MB, SHA-256 verified; needs Rosetta on Apple Silicon).
+You still supply Project64.exe yourself (https://www.pj64-emu.com) and set its path in Settings.
+On Windows it builds Project64 from source with MSBuild. On Linux, install wine from your package manager.
 
 Options:
   --check        only check toolchains (dry run); build nothing
@@ -53,9 +70,12 @@ const HINTS = {
     linux: 'sudo apt install build-essential python3-dev',
     win32: 'winget install Microsoft.VisualStudio.2022.BuildTools   (workload: Desktop development with C++)',
   },
+  rosetta: { darwin: 'softwareupdate --install-rosetta --agree-to-license', linux: '', win32: '' },
+  tar: { darwin: 'tar ships with macOS (check that /usr/bin/tar exists)', linux: 'sudo apt install tar xz-utils', win32: '' },
+  curl: { darwin: 'curl ships with macOS (check that /usr/bin/curl exists)', linux: 'sudo apt install curl', win32: '' },
   msbuild: {
     darwin: 'Project64 builds on Windows only.',
-    linux: 'Project64 builds on Windows only.',
+    linux: 'Project64 builds on Windows only; on Linux install wine (sudo apt install wine) and set the Project64.exe path in Settings.',
     win32: 'winget install Microsoft.VisualStudio.2022.BuildTools   (workload: Desktop development with C++), then run from a "Developer Command Prompt"',
   },
   mgbaLibs: {
@@ -186,6 +206,235 @@ function hostRid() {
   const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
   const os_ = PLATFORM === 'darwin' ? 'osx' : PLATFORM === 'win32' ? 'win' : 'linux';
   return `${os_}-${arch}`;
+}
+
+// ---------- wine runtime (macOS, for Project64.exe) ----------
+function sha256File(file) {
+  const hash = crypto.createHash('sha256');
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.allocUnsafe(1 << 20);
+    for (;;) {
+      const n = fs.readSync(fd, buf, 0, buf.length, null);
+      if (n === 0) break;
+      hash.update(buf.subarray(0, n));
+    }
+  } finally { fs.closeSync(fd); }
+  return hash.digest('hex');
+}
+
+function hasRosetta() {
+  if (process.arch !== 'arm64') return true; // Intel Mac: no translation needed
+  if (fs.existsSync(ROSETTA_PATH)) return true;
+  return spawnSync('arch', ['-x86_64', '/usr/bin/true'], { stdio: 'ignore' }).status === 0;
+}
+
+/** Refuse archives that hold absolute paths or `..` segments. Lists only; extracts nothing. */
+function assertSafeArchiveListing(archive) {
+  const r = spawnSync('tar', ['-tJf', archive], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  if (r.error || r.status !== 0) throw new Error(`could not list the archive: ${r.error ? r.error.message : (r.stderr || '').trim()}`);
+  const entries = r.stdout.split('\n').filter(Boolean);
+  if (entries.length === 0) throw new Error('the archive is empty');
+  for (const e of entries) {
+    if (e.startsWith('/') || /^[A-Za-z]:/.test(e) || e.includes('\0') || e.split(/[\\/]+/).includes('..')) {
+      throw new Error(`refusing unsafe archive entry: ${JSON.stringify(e.slice(0, 200))}`);
+    }
+  }
+  return entries.length;
+}
+
+/**
+ * After extraction: every symlink must be relative, non-dangling and resolve (kernel semantics, via realpath, so
+ * chained links like `a -> .` + `c -> a/../..` are caught) to a path inside `root`. `..` segments are allowed
+ * only when the realpath stays inside the tree. Throws on the first offender; moves nothing.
+ */
+function assertSymlinksContained(root) {
+  // .native = the OS realpath(3): the JS fs.realpathSync normalizes `..` lexically and would miss chained escapes.
+  const realRoot = fs.realpathSync.native(root);
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isSymbolicLink()) {
+        const target = fs.readlinkSync(full);
+        const rel = path.relative(root, full);
+        if (!target || target.includes('\0') || path.isAbsolute(target) || /^[A-Za-z]:/.test(target)) {
+          throw new Error(`refusing symlink with an absolute or empty target: ${rel} -> ${target}`);
+        }
+        let real;
+        try { real = fs.realpathSync.native(full); } catch {
+          throw new Error(`refusing dangling or unresolvable symlink: ${rel} -> ${target}`);
+        }
+        if (real !== realRoot && !real.startsWith(realRoot + path.sep)) {
+          throw new Error(`refusing symlink that leaves the archive: ${rel} -> ${target}`);
+        }
+      } else if (e.isDirectory()) walk(full);
+    }
+  };
+  walk(root);
+}
+
+/** Find the wine tree root: a directory D with D/bin/wine (or wine64) and D/lib. Descends into .app bundles. */
+function findWineRoot(root, maxDepth = 8) {
+  const walk = (dir, depth) => {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return null; }
+    const names = new Set(entries.map((e) => e.name));
+    if (names.has('bin') && names.has('lib')) {
+      const bin = path.join(dir, 'bin');
+      if (['wine', 'wine64'].some((n) => { try { return fs.statSync(path.join(bin, n)).isFile(); } catch { return false; } })) return dir;
+    }
+    if (depth >= maxDepth) return null;
+    for (const e of entries) {
+      if (e.isDirectory() && !e.isSymbolicLink()) {
+        const r = walk(path.join(dir, e.name), depth + 1);
+        if (r) return r;
+      }
+    }
+    return null;
+  };
+  return walk(root, 0);
+}
+
+/** Path of the wine launcher inside a wine tree root. Prefer `wine` (handles 32/64-bit), else `wine64`. */
+function wineBinaryIn(wineRoot) {
+  for (const n of ['wine', 'wine64']) {
+    const p = path.join(wineRoot, 'bin', n);
+    try { if (fs.statSync(p).isFile()) return p; } catch { /* next */ }
+  }
+  return null;
+}
+
+function wineEnv(prefix) {
+  const env = { ...process.env, WINEDEBUG: '-all', WINEDLLOVERRIDES: 'mscoree,mshtml=' };
+  for (const k of Object.keys(env)) if (k === 'WINELOADER' || k.startsWith('DYLD_') || k.startsWith('LD_')) delete env[k];
+  if (prefix) env.WINEPREFIX = prefix;
+  return env;
+}
+
+/**
+ * Installs bin/wine (idempotent: skipped when bin/wine/bin/wine --version reports the pinned wine-<WINE_VERSION>), then links it at the
+ * packaged app's userData location so the installed app finds it too.
+ */
+function installWineRuntime() {
+  let r;
+  const existing = wineBinaryIn(WINE_OUT_DIR);
+  const probe = existing ? spawnSync(existing, ['--version'], { encoding: 'utf8', timeout: 60000, env: wineEnv() }) : null;
+  const probed = probe ? (probe.stdout || '').trim() : '';
+  const probeOk = probe && !probe.error && probe.status === 0;
+  if (probeOk && probed === `wine-${WINE_VERSION}`) {
+    console.log(`  Wine runtime already installed (${path.relative(ROOT, existing)}: ${probed}); skipping download/extract`);
+    r = { ok: true, note: `${path.relative(ROOT, existing)} (${probed}), already installed` };
+  } else {
+    if (probeOk && /^wine/i.test(probed)) console.log(`  installed Wine runtime (${probed}) differs from the pinned wine-${WINE_VERSION}; reinstalling`);
+    r = downloadAndInstallWineRuntime();
+  }
+  if (r.ok) linkWineRuntimeIntoUserData();
+  return r;
+}
+
+/** Electron's default macOS userData dir: ~/Library/Application Support/<package.json name>. */
+function appUserDataDir() {
+  let name = 'uemulator';
+  try {
+    const n = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).name;
+    if (typeof n === 'string' && /^[A-Za-z0-9._-]+$/.test(n)) name = n;
+  } catch { /* keep default */ }
+  return path.join(os.homedir(), 'Library', 'Application Support', name);
+}
+
+/**
+ * Symlink <userData>/runtime/wine -> <repo>/bin/wine. An existing symlink is replaced; a real file or
+ * directory is never touched (a notice is printed). Failure here is reported but not fatal.
+ */
+function linkWineRuntimeIntoUserData() {
+  const link = path.join(appUserDataDir(), 'runtime', 'wine');
+  try {
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    let st = null;
+    try { st = fs.lstatSync(link); } catch { /* absent */ }
+    if (st && !st.isSymbolicLink()) {
+      console.log(`  NOTICE: ${link} already exists and is not a symlink; leaving it alone. Remove it manually if the installed app should use ${WINE_OUT_DIR}.`);
+      return;
+    }
+    if (st) fs.unlinkSync(link);
+    fs.symlinkSync(WINE_OUT_DIR, link, 'dir');
+    console.log(`  linked for the installed app: ${link} -> ${WINE_OUT_DIR}`);
+    console.log('  (the dev profile finds bin/wine directly; if the repo moves, re-run this step to refresh the link)');
+  } catch (err) {
+    console.log(`  NOTICE: could not create the wine runtime link at ${link}: ${err.message}`);
+  }
+}
+
+function downloadAndInstallWineRuntime() {
+  fs.mkdirSync(WINE_DL_DIR, { recursive: true });
+  const archive = path.join(WINE_DL_DIR, path.basename(new URL(WINE_BIN_URL).pathname));
+  let have = fs.existsSync(archive) ? sha256File(archive) : null;
+  if (have === WINE_BIN_SHA256) {
+    console.log(`  reusing verified download: ${path.relative(ROOT, archive)}`);
+  } else {
+    if (have) console.log('  existing download has the wrong checksum; downloading again');
+    // Download to a temp name, verify, and only then move into place.
+    const part = `${archive}.part`;
+    fs.rmSync(part, { force: true });
+    if (!run('curl', ['-fL', '--retry', '3', '-o', part, WINE_BIN_URL])) {
+      fs.rmSync(part, { force: true });
+      return { ok: false, note: `download failed: ${WINE_BIN_URL}` };
+    }
+    have = sha256File(part);
+    if (have !== WINE_BIN_SHA256) {
+      fs.rmSync(part, { force: true });
+      return { ok: false, note: `CHECKSUM MISMATCH, aborting (nothing extracted). expected ${WINE_BIN_SHA256}, got ${have}` };
+    }
+    fs.renameSync(part, archive);
+  }
+  console.log(`  sha256 OK (${WINE_BIN_SHA256.slice(0, 16)}...)`);
+
+  try { console.log(`  archive listing OK (${assertSafeArchiveListing(archive)} entries, no absolute or ".." paths)`); } catch (err) {
+    return { ok: false, note: err.message };
+  }
+
+  cleanDir(WINE_UNPACK_DIR);
+  // Array args, no shell. -o: do not restore owners. Never -P (absolute paths stay refused by tar itself).
+  if (!run('tar', ['-xJf', archive, '-C', WINE_UNPACK_DIR])) return { ok: false, note: 'extraction failed' };
+  try { assertSymlinksContained(WINE_UNPACK_DIR); } catch (err) {
+    fs.rmSync(WINE_UNPACK_DIR, { recursive: true, force: true });
+    return { ok: false, note: err.message };
+  }
+  const root = findWineRoot(WINE_UNPACK_DIR);
+  if (!root) return { ok: false, note: `no wine tree (bin/wine + lib) found in the archive; inspect ${path.relative(ROOT, WINE_UNPACK_DIR)}` };
+  console.log(`  wine tree found at: ${path.relative(WINE_UNPACK_DIR, root)}`);
+
+  fs.rmSync(WINE_OUT_DIR, { recursive: true, force: true });
+  fs.mkdirSync(BIN_DIR, { recursive: true });
+  fs.renameSync(root, WINE_OUT_DIR); // same filesystem; keeps bin/, lib/, share/ together
+  fs.rmSync(WINE_UNPACK_DIR, { recursive: true, force: true });
+
+  const wine = wineBinaryIn(WINE_OUT_DIR);
+  if (!wine) return { ok: false, note: 'installed, but no bin/wine found' };
+  fs.chmodSync(wine, 0o755);
+
+  const ver = spawnSync(wine, ['--version'], { encoding: 'utf8', timeout: 60000, env: wineEnv() });
+  const out = (ver.stdout || '').trim();
+  if (ver.error || ver.status !== 0 || !/^wine/i.test(out)) {
+    return { ok: false, note: `wine --version failed (${ver.error ? ver.error.message : `exit ${ver.status}: ${(ver.stderr || '').trim().slice(0, 300)}`})` };
+  }
+  console.log(`  $ ${path.relative(ROOT, wine)} --version\n  ${out}`);
+  smokeTestPrefix(wine);
+  return { ok: true, note: `${path.relative(ROOT, wine)} (${out})` };
+}
+
+/** Optional deeper check: `wine cmd /c ver` in a throwaway prefix. Failure is reported, not fatal. */
+function smokeTestPrefix(wine) {
+  const prefix = fs.mkdtempSync(path.join(os.tmpdir(), 'uemu-wine-smoke-'));
+  console.log('  smoke test: wine cmd /c ver in a throwaway prefix (first run initialises the prefix; may take a while)');
+  const t0 = Date.now();
+  const r = spawnSync(wine, ['cmd', '/c', 'ver'], { encoding: 'utf8', timeout: 120000, killSignal: 'SIGKILL', env: wineEnv(prefix) });
+  const secs = ((Date.now() - t0) / 1000).toFixed(1);
+  if (r.error) console.log(`  smoke test did not complete after ${secs}s: ${r.error.message}`);
+  else console.log(`  smoke test exit ${r.status} in ${secs}s: ${(r.stdout || '').trim().replace(/\s+/g, ' ')}${r.stderr && r.stderr.trim() ? ` | stderr: ${r.stderr.trim().slice(0, 300)}` : ''}`);
+  // Stop any wineserver left behind by the throwaway prefix, then delete it.
+  spawnSync(path.join(path.dirname(wine), 'wineserver'), ['-k'], { stdio: 'ignore', timeout: 15000, env: wineEnv(prefix) });
+  fs.rmSync(prefix, { recursive: true, force: true });
 }
 
 // ---------- per-core definitions ----------
@@ -393,15 +642,26 @@ const CORES = {
   },
 
   project64: {
-    platforms: ['win32'],
+    // win32: build from source (MSBuild). darwin: install a Wine runtime (Project64.exe is user-supplied).
+    // linux: not built here; install wine from the package manager.
+    platforms: ['win32', 'darwin'],
+    needsSubmodule: PLATFORM === 'win32',
     check() {
       const missing = [];
-      if (PLATFORM !== 'win32') return [{ tool: 'Windows', hint: hint('msbuild') }];
+      if (PLATFORM === 'darwin') {
+        if (!hasRosetta()) missing.push({ tool: 'Rosetta 2 (Wine is x86_64)', hint: hint('rosetta') });
+        if (!exists('tar', ['--version'])) missing.push({ tool: 'tar', hint: hint('tar') });
+        if (!exists('curl', ['--version'])) missing.push({ tool: 'curl', hint: hint('curl') });
+        if (missing.length === 0) console.log(`  will install Wine ${WINE_VERSION} (Gcenx build, ~190 MB) into ${path.relative(ROOT, WINE_OUT_DIR)}/; you supply Project64.exe`);
+        return missing;
+      }
+      if (PLATFORM !== 'win32') return [{ tool: 'Windows or macOS', hint: hint('msbuild') }];
       if (!exists('git')) missing.push({ tool: 'git', hint: hint('git') });
       if (!findMsbuild()) missing.push({ tool: 'msbuild (Visual Studio 2019+)', hint: hint('msbuild') });
       return missing;
     },
     build() {
+      if (PLATFORM === 'darwin') return installWineRuntime();
       const src = path.join(CORES_DIR, 'project64');
       const out = path.join(BIN_DIR, 'project64');
       // Project64 needs GLideN64 and SDL sources from its own nested submodules.
@@ -480,7 +740,7 @@ function main() {
       rows.push({ id, status: 'unsupported', note: `builds on ${core.platforms.join('/')} only` });
       continue;
     }
-    if (!submoduleReady(id)) {
+    if (core.needsSubmodule !== false && !submoduleReady(id)) {
       console.log('  cores/' + id + ' is empty. Run: git submodule update --init --depth 1 cores/' + id);
       rows.push({ id, status: 'skipped', note: 'submodule not checked out' });
       continue;
@@ -511,4 +771,7 @@ function main() {
   if (rows.some((r) => r.status === 'failed')) process.exitCode = 1;
 }
 
-main();
+export { sha256File, assertSafeArchiveListing, assertSymlinksContained };
+
+// Only run when executed directly, so tests can import the helpers.
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) main();

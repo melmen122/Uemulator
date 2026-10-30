@@ -143,7 +143,8 @@ function validateCorePath(p, core, { fs = nodeFs, platform = process.platform } 
 
 /**
  * Build channel -> handler map. `ctx`:
- *  { store, processes, dialog, shell, getWindow, fs?, platform?, resolveDeps? }
+ *  { store, processes, dialog, shell, getWindow, fs?, platform?, resolveDeps?, userDataDir? }
+ * userDataDir (the dir the store uses) hosts the wine prefix: <userDataDir>/wine/<coreId>.
  * Handlers receive plain args (no IPC event) and throw readable Errors.
  */
 function createHandlers(ctx) {
@@ -253,10 +254,24 @@ function createHandlers(ctx) {
 
       const r = resolveExecutable(core, settings, resolveDeps);
       if (r.status === 'unsupported') throw new Error(`${core.name} is not supported on this operating system.`);
-      if (r.status !== 'ready') throw new Error(`${core.name} is not installed. Set its path on the Cores page or run "npm run build:cores ${core.id}".`);
+      if (r.status !== 'ready') {
+        throw new Error(r.detail
+          ? `${core.name} is not installed. ${r.detail}`
+          : `${core.name} is not installed. Set its path on the Cores page or run "npm run build:cores ${core.id}".`);
+      }
 
-      const { command, args } = core.buildArgs(game.path, { exe: r.exe, fullscreen: !!settings.fullscreen, platform });
-      const session = await processes.start({ gameId: game.id, coreId: core.id, command, args });
+      const buildOpts = { exe: r.exe, fullscreen: !!settings.fullscreen, platform };
+      if (core.wine && platform !== 'win32') {
+        // Wine-run core: the binary comes from resolution; the prefix lives under the app's userData dir.
+        if (r.wine) buildOpts.wine = r.wine;
+        if (typeof ctx.userDataDir === 'string' && ctx.userDataDir.length > 0) {
+          buildOpts.prefixDir = nodePath.join(ctx.userDataDir, 'wine', core.id);
+        }
+      }
+      const { command, args, env } = core.buildArgs(game.path, buildOpts);
+      // Create the prefix only after buildArgs accepted the request.
+      if (buildOpts.prefixDir) fs.mkdirSync(buildOpts.prefixDir, { recursive: true, mode: 0o700 });
+      const session = await processes.start({ gameId: game.id, coreId: core.id, command, args, env });
 
       const fresh = store.getLibrary();
       const g = fresh.games.find((x) => x.id === game.id);

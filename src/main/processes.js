@@ -10,9 +10,39 @@ const FLUSH_INTERVAL_MS = 50;
 const MAX_LINES_PER_FLUSH = 100;
 const MAX_QUEUE = 1000;
 const KILL_GRACE_MS = 5000;
+// env accepted from adapters (never from the renderer). Anything else is ignored.
+const ENV_ALLOWLIST = Object.freeze(['WINEPREFIX', 'WINEDEBUG', 'WINEDLLOVERRIDES']);
+const MAX_ENV_VALUE_LEN = 4096;
+// After the child exits, wait this long for its stdio to close before reporting the exit anyway.
+// wine leaves a `wineserver` behind that inherits the pipes for a few seconds, which delays 'close'.
+const EXIT_CLOSE_GRACE_MS = 1500;
+
+/** Validate an adapter-supplied env object against the allowlist. Returns a plain object (maybe empty). */
+function sanitizeEnv(env) {
+  if (env === undefined || env === null) return {};
+  if (typeof env !== 'object' || Array.isArray(env)) throw new Error('env must be an object');
+  const out = {};
+  for (const key of ENV_ALLOWLIST) {
+    if (!Object.prototype.hasOwnProperty.call(env, key)) continue;
+    const v = env[key];
+    if (typeof v !== 'string' || v.includes('\0') || v.length > MAX_ENV_VALUE_LEN) throw new Error(`Invalid value for env ${key}`);
+    out[key] = v;
+  }
+  return out;
+}
+
+/** Inherited environment minus loader-injection variables (used only for env-carrying wine launches). */
+function inheritedEnvForWine(base) {
+  const out = {};
+  for (const [k, v] of Object.entries(base)) {
+    if (k === 'WINELOADER' || k.startsWith('DYLD_') || k.startsWith('LD_')) continue;
+    out[k] = v;
+  }
+  return out;
+}
 
 /**
- * @param {{spawn?:Function, emit?:(ev:object)=>void, now?:()=>number, killGraceMs?:number, flushIntervalMs?:number}} [opts]
+ * @param {{spawn?:Function, emit?:(ev:object)=>void, now?:()=>number, killGraceMs?:number, flushIntervalMs?:number, exitCloseGraceMs?:number}} [opts]
  */
 function createProcessManager(opts = {}) {
   const spawn = opts.spawn || childProcess.spawn;
@@ -20,6 +50,7 @@ function createProcessManager(opts = {}) {
   const now = opts.now || Date.now;
   const killGraceMs = opts.killGraceMs ?? KILL_GRACE_MS;
   const flushIntervalMs = opts.flushIntervalMs ?? FLUSH_INTERVAL_MS;
+  const exitCloseGraceMs = opts.exitCloseGraceMs ?? EXIT_CLOSE_GRACE_MS;
   /** @type {Map<string, object>} */
   const sessions = new Map();
 
@@ -59,35 +90,47 @@ function createProcessManager(opts = {}) {
     if (!stream) return;
     let buf = '';
     stream.setEncoding && stream.setEncoding('utf8');
-    stream.on('data', (chunk) => {
+    const onData = (chunk) => {
+      if (s.exited) return;
       buf += chunk;
       const parts = buf.split(/\r?\n/);
       buf = parts.pop();
       for (const line of parts) pushLine(s, line);
       if (buf.length > 8192) { pushLine(s, buf); buf = ''; } // no newline in sight; avoid unbounded growth
-    });
-    const end = () => { if (buf) { pushLine(s, buf); buf = ''; } };
+    };
+    const end = () => { if (s.exited) return; if (buf) { pushLine(s, buf); buf = ''; } };
+    stream.on('data', onData);
     stream.on('end', end);
     stream.on('close', end);
     stream.on('error', () => {});
+    // Called by finish(): emit the leftover partial line, then drop the listeners so nothing arrives after 'exit'.
+    s.detachers.push(() => {
+      if (buf) { pushLine(s, buf); buf = ''; }
+      stream.removeListener('data', onData);
+      stream.removeListener('end', end);
+      stream.removeListener('close', end);
+    });
   }
 
   /**
    * Spawn a game. Resolves with {pid, sessionId} once the process actually started;
    * rejects with a readable Error if it could not be spawned.
    */
-  function start({ gameId, coreId, command, args }) {
+  function start({ gameId, coreId, command, args, env }) {
     return new Promise((resolve, reject) => {
       let child;
       try {
-        child = spawn(command, args, { shell: false, detached: false, stdio: ['ignore', 'pipe', 'pipe'] });
+        const spawnOpts = { shell: false, detached: false, stdio: ['ignore', 'pipe', 'pipe'] };
+        const extra = sanitizeEnv(env);
+        if (Object.keys(extra).length > 0) spawnOpts.env = { ...inheritedEnvForWine(process.env), ...extra };
+        child = spawn(command, args, spawnOpts);
       } catch (err) {
         reject(new Error(`Could not start ${coreId}: ${err.message}`));
         return;
       }
       const s = {
         sessionId: crypto.randomUUID(), gameId, coreId, child, pid: child.pid,
-        startedAt: now(), log: [], queue: [], dropped: 0, timer: null, killTimer: null, exited: false, started: false,
+        startedAt: now(), log: [], queue: [], dropped: 0, timer: null, killTimer: null, exitTimer: null, exited: false, started: false, detachers: [],
       };
 
       // `on`, not `once`: a later error (e.g. EPERM from child.kill()) must never become an uncaught exception.
@@ -110,14 +153,28 @@ function createProcessManager(opts = {}) {
       attach(s, child.stdout);
       attach(s, child.stderr);
 
-      child.once('close', (code, signal) => {
+      // 'close' fires once stdio is drained; 'exit' fires when the process ends. A lingering grandchild
+      // (wineserver) can hold the pipes open, so 'exit' also arms a short fallback to finish the session.
+      const finish = (code, signal) => {
+        if (s.exited) return;
         s.exited = true;
         if (s.killTimer) { clearTimeout(s.killTimer); s.killTimer = null; }
+        if (s.exitTimer) { clearTimeout(s.exitTimer); s.exitTimer = null; }
+        if (!s.started) { if (s.timer) { clearTimeout(s.timer); s.timer = null; } return; } // spawn failure already rejected
+        // Flush each stream's partial line and detach its listeners BEFORE exit, so no 'log' can follow 'exit'.
+        for (const detach of s.detachers) { try { detach(); } catch { /* ignore */ } }
+        s.detachers = [];
         if (s.timer) { clearTimeout(s.timer); s.timer = null; }
-        if (!s.started) return; // spawn failure already rejected
+        for (const st of [child.stdout, child.stderr]) { try { if (st && !st.destroyed && st.destroy) st.destroy(); } catch { /* ignore */ } }
         flush(s, true);
         sessions.delete(s.sessionId);
         safeEmit({ type: 'exit', sessionId: s.sessionId, code: typeof code === 'number' ? code : null, signal: signal || null });
+      };
+      child.once('close', finish);
+      child.once('exit', (code, signal) => {
+        if (s.exited || s.exitTimer) return;
+        s.exitTimer = setTimeout(() => { s.exitTimer = null; finish(code, signal); }, exitCloseGraceMs);
+        if (s.exitTimer.unref) s.exitTimer.unref();
       });
     });
   }
@@ -175,4 +232,4 @@ function createProcessManager(opts = {}) {
   return { start, stop, list, getLog, killAll, get size() { return sessions.size; } };
 }
 
-module.exports = { createProcessManager, MAX_LOG_LINES };
+module.exports = { createProcessManager, MAX_LOG_LINES, ENV_ALLOWLIST, sanitizeEnv };

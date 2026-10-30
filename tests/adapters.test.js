@@ -21,7 +21,7 @@ test('metadata', () => {
   assert.deepEqual(mgba.systems.sort(), ['gb', 'gba', 'gbc']);
   assert.deepEqual(pyboy.systems.sort(), ['gb', 'gbc']);
   assert.deepEqual(project64.systems, ['n64']);
-  assert.deepEqual(project64.platforms, ['win32']);
+  assert.ok(project64.platforms.includes('darwin') && project64.platforms.includes('win32'));
   assert.deepEqual(azahar.systems, ['3ds']);
   assert.deepEqual(ryujinx.systems, ['switch']);
   for (const c of [mgba, pyboy, azahar, ryujinx]) {
@@ -96,9 +96,38 @@ test('project64: non-win32 with .exe uses wine, args are [exe, rom]', () => {
       const r = project64.buildArgs(rom, { exe: '/opt/pj64/Project64.exe', platform });
       assert.equal(r.command, 'wine');
       assert.deepEqual(r.args, ['/opt/pj64/Project64.exe', rom]);
+      assert.equal(r.args[r.args.length - 1], rom);
     }
   }
   assert.equal(project64.buildArgs('/r/x.z64', { exe: '/p/PROJECT64.EXE', platform: 'linux' }).command, 'wine');
+});
+
+test('project64: non-win32 uses opts.wine and sets the wine env', () => {
+  for (const rom of NASTY) {
+    const r = project64.buildArgs(rom, { exe: '/opt/My PJ64/Project64.exe', platform: 'darwin', wine: '/app/bin/wine/bin/wine', prefixDir: '/ud/wine/project64' });
+    assert.equal(r.command, '/app/bin/wine/bin/wine');
+    assert.deepEqual(r.args, ['/opt/My PJ64/Project64.exe', rom]);
+    assert.deepEqual(r.env, { WINEPREFIX: '/ud/wine/project64', WINEDEBUG: '-all', WINEDLLOVERRIDES: 'mscoree,mshtml=' });
+  }
+});
+
+test('project64: WINEPREFIX omitted without prefixDir; bad wine/prefix rejected', () => {
+  const r = project64.buildArgs('/r/x.z64', { exe: '/p/Project64.exe', platform: 'linux' });
+  assert.equal(r.command, 'wine');
+  assert.deepEqual(r.env, { WINEDEBUG: '-all', WINEDLLOVERRIDES: 'mscoree,mshtml=' });
+  assert.ok(!('WINEPREFIX' in r.env));
+  const base = { exe: '/p/Project64.exe', platform: 'linux' };
+  assert.throws(() => project64.buildArgs('/r/x.z64', { ...base, wine: 'a\0b' }));
+  assert.throws(() => project64.buildArgs('/r/x.z64', { ...base, wine: '' }));
+  assert.throws(() => project64.buildArgs('/r/x.z64', { ...base, prefixDir: 'a\0b' }));
+  assert.throws(() => project64.buildArgs('/r/x.z64', { ...base, prefixDir: '' }));
+});
+
+test('other adapters return no env', () => {
+  for (const [core, exe] of [[mgba, '/usr/bin/mgba'], [azahar, '/usr/bin/azahar'], [ryujinx, '/usr/bin/Ryujinx'], [pyboy, '/usr/bin/pyboy']]) {
+    const r = core.buildArgs('/r/x', { exe });
+    assert.ok(r.env === undefined || Object.keys(r.env).length === 0, core.id);
+  }
 });
 
 test('project64: non-win32 without .exe is refused', () => {
@@ -108,6 +137,7 @@ test('project64: non-win32 without .exe is refused', () => {
 test('project64: win32 runs exe directly; fullscreen ignored', () => {
   const r = project64.buildArgs('C:\\roms\\Mario 64.z64', { exe: 'C:\\pj\\Project64.exe', platform: 'win32', fullscreen: true });
   assert.deepEqual(r, { command: 'C:\\pj\\Project64.exe', args: ['C:\\roms\\Mario 64.z64'] });
+  assert.equal(r.env, undefined);
   assert.throws(() => project64.buildArgs('', { exe: 'x.exe', platform: 'win32' }));
 });
 

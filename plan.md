@@ -5,7 +5,7 @@ game library, launcher and settings UI.
 
 | System | Core | Upstream | Language / build | License |
 |---|---|---|---|---|
-| Nintendo 64 | Project64 | github.com/project64/project64 | C++ / MSBuild (Windows only) | GPL-2.0 |
+| Nintendo 64 | Project64 | github.com/project64/project64 | C++ / MSBuild (Windows); macOS and Linux run the exe via Wine | GPL-2.0 |
 | Nintendo Switch | Ryujinx (Ryubing) | git.ryujinx.app/ryubing/ryujinx (moved off GitHub) | C# / .NET SDK 10.0.301 (`cores/ryujinx/global.json`) | MIT |
 | Nintendo 3DS | Azahar | github.com/azahar-emu/azahar | C++ / CMake + Qt6 | GPL-2.0 |
 | Game Boy / Color | PyBoy | github.com/Baekalfen/PyBoy | Python (+Cython) / pip | LGPL-3.0 |
@@ -31,9 +31,10 @@ separation. So the plan is:
   1. a user override path in Settings
   2. a locally built binary in `bin/<id>/` (from `npm run build:cores`)
   3. well-known system install locations (e.g. `/Applications/mGBA.app`, Homebrew, `PATH`)
-- **Platform reality**: Project64 is Windows-only. On macOS/Linux its adapter uses `wine` when it's on
-  PATH and a `Project64.exe` is configured; otherwise the core shows "Unsupported on this OS". The
-  other five are cross-platform.
+- **Platform reality**: Project64 has no native macOS or Linux build. On macOS/Linux its adapter runs
+  the user-supplied `Project64.exe` through a Wine binary (`bin/wine/` on macOS, then the app-data link,
+  then `wine` on PATH). It is Ready only when both the Wine binary and the exe are found; otherwise it
+  shows Not installed with a hint. The other five are cross-platform.
 
 ### Phase 2 (not in v1)
 - Embedded play: PyBoy runs headless in a Python bridge that streams frames into a `<canvas>`. mGBA
@@ -107,7 +108,18 @@ module.exports = {
 ```
 `cores/index.js` adds the shared logic: `resolveExecutable(core, settings)` checks the override, then
 the candidates, then `which`, and returns `{ status: 'ready'|'missing'|'unsupported', exe, source }`.
-`buildArgs` must be pure so it can be unit tested.
+`unsupported` is returned only for platforms outside win32/darwin/linux.
+
+Wine-run adapters (`wine: true`; Project64 today) resolve differently on darwin/linux. The `.exe`
+comes from the override (or `candidates`, which is win32-only) and must be a regular file ending in
+`.exe`. The Wine binary comes from `wineCandidates(ctx)` (`bin/wine/bin/wine`, then
+`<userData>/runtime/wine/bin/wine`), then `winePathNames` on PATH. The result is
+`{ status: 'ready'|'missing', exe, source, wine, wineSource: 'built'|'runtime'|'path'|null, detail? }`.
+`detail` is a readable hint when the core is not ready.
+
+`buildArgs` must be pure so it can be unit tested. For Wine-run adapters on non-win32 it returns
+`{ command: wine, args: [exe, rom], env }`, where `env` holds `WINEPREFIX` plus fixed `WINEDEBUG` and
+`WINEDLLOVERRIDES`.
 
 The RPCS3 adapter always passes `--no-gui`, so the game boots without the main window and RPCS3
 quits when the game closes. `--fullscreen` is added after it only when the setting is on. The
@@ -116,7 +128,7 @@ path is always last.
 ### 3.3 IPC (`window.uemu`, all return Promises)
 | Method | Channel | Returns |
 |---|---|---|
-| `getCores()` | `cores:list` | `[{id,name,systems,status,exe,source,homepage,license}]` |
+| `getCores()` | `cores:list` | `[{id,name,systems,status,exe,source,homepage,license,detail?}]`. `detail` is present only when a core has a hint (e.g. Wine runtime missing). |
 | `setCorePath(id, path\|null)` | `cores:setPath` | updated core |
 | `pickFile(kind)` | `dialog:pickFile` (`'exe'`\|`'rom'`) | path or null |
 | `pickFolder()` | `dialog:pickFolder` | path or null |
@@ -141,6 +153,13 @@ Settings shape: `{ fullscreen:false, gbCore:'mgba', corePaths:{ [coreId]: string
   resolution order above.
 - `child_process.spawn(cmd, args, { shell: false })`. No string-built commands.
 - `openExternal` is allow-listed to `http:`/`https:`. Navigation and `window.open` are denied.
+- Adapter `env` is accepted only for the allowlist `WINEPREFIX`, `WINEDEBUG`, `WINEDLLOVERRIDES`
+  (`ENV_ALLOWLIST` in `processes.js`). Values must be strings with no NUL and at most 4096 chars. A
+  Wine child inherits the app environment minus `WINELOADER` and `DYLD_*`/`LD_*`. The renderer never
+  sets env.
+- Wine prefix: `<userData>/wine/<coreId>` (Project64: `wine/project64`). `game:launch` creates it with
+  mode 0700 only after `buildArgs` accepts the request. Process exit is reported after 1.5 s even if a
+  lingering `wineserver` still holds the pipes (`EXIT_CLOSE_GRACE_MS`).
 
 ## 4. Build scripts (`scripts/build-cores.mjs`)
 | Core | Steps | Toolchain |
@@ -149,7 +168,7 @@ Settings shape: `{ fullscreen:false, gbCore:'mgba', corePaths:{ [coreId]: string
 | azahar | `git -C cores/azahar submodule update --init --recursive --depth 1`, then out-of-tree `cmake -B bin/.build/azahar -DENABLE_TESTS=OFF -DENABLE_QT=ON`, build target `citra_meta` (executable `azahar`) → copied to `bin/azahar` | cmake, Qt 6, SDL2, a C++20 compiler |
 | ryujinx | `dotnet publish cores/ryujinx/src/Ryujinx/Ryujinx.csproj -c Release -r <host RID> --self-contained true -o bin/ryujinx`. Executable `Ryujinx` (`Ryujinx.app/Contents/MacOS/Ryujinx` only for a system .app install). | .NET SDK 10.0.301 (`global.json`, `rollForward: latestFeature`) |
 | pyboy | Built from a copy in `bin/.build/pyboy-src` so pip never writes into `cores/`: `python3 -m venv bin/pyboy/venv` → `pip install <copy>` (deps: numpy, pysdl2, pysdl2-dll) | python3 ≥ 3.9, a C compiler (Cython) |
-| project64 | Windows only: `git -C cores/project64 submodule update --init --recursive --depth 1` (GLideN64, SDL), then `msbuild Project64.sln /m /p:Configuration=Release /p:Platform=x64` → `cores/project64/Bin/x64/Release` copied to `bin/project64` | Visual Studio 2019+ (MSBuild) |
+| project64 | Windows: `git -C cores/project64 submodule update --init --recursive --depth 1` (GLideN64, SDL), then `msbuild Project64.sln /m /p:Configuration=Release /p:Platform=x64` → `cores/project64/Bin/x64/Release` copied to `bin/project64`. macOS: no Project64 build. Downloads Wine 11.18 (Gcenx `macOS_Wine_builds`, x86_64, ~190 MB), checks SHA-256 before extraction, extracts to `bin/wine/`, and symlinks `<userData>/runtime/wine` to it. A smoke test (`wine cmd /c ver`) is reported but not fatal. Linux: not built here (uses `wine` from PATH). | Windows: git, Visual Studio 2019+ (MSBuild). macOS: Rosetta 2 (Apple Silicon), tar, curl. |
 | rpcs3 | Nested submodules fetched selectively: `git -C cores/rpcs3 submodule update --init --recursive --depth 1`, skipping LLVM, SDL, curl, zlib and feralinteractive on macOS/Linux (Windows fetches all). Then out-of-tree `cmake -S cores/rpcs3 -B bin/.build/rpcs3 -G Ninja` (macOS/Linux, system LLVM, system SDL3) or `-G "Visual Studio 17 2022" -A x64` with `BUILD_LLVM=ON` (Windows) → `cmake --build --target rpcs3` → `<build>/bin` copied to `bin/rpcs3`. Executable: `bin/rpcs3/rpcs3.app/Contents/MacOS/rpcs3` on macOS, `rpcs3` on Linux, `rpcs3.exe` on Windows. Upstream officially supports Windows and Linux; macOS is best-effort and untested here. | CMake 3.28+, Ninja (macOS/Linux), Qt 6.7+, SDL3, Vulkan, LLVM, Clang 19+ / GCC 13+. Windows: VS 2022 and the Vulkan SDK. |
 
 The script checks for each toolchain first. When one is missing it prints the exact install command
@@ -192,6 +211,9 @@ missing toolchain never fails the others.
 
 ## 8. Status
 - v1 implemented: Electron shell, game library, six core adapters, build script, 134 unit tests.
+- Project64 on macOS via Wine: `build:cores -- project64` installs the Wine runtime, and the adapter
+  resolves it per §3.2. Only Wine's own programs have been run. Project64 has not been run under Wine
+  yet. `npm test` now runs 193 unit tests.
 - PS3 / RPCS3 added: system table entry, EBOOT.BIN/USRDIR scanning, adapter, build script entry,
   PS3 UI filter and badge. The RPCS3 build has not been run on the dev machine.
 - Not yet done: embedded play (phase 2), prebuilt core installer, real-emulator launch tests (none of

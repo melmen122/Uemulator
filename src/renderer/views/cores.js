@@ -48,8 +48,15 @@ export function createCoresView() {
         h('dt', null, 'Executable'),
         h('dd', { class: core.exe ? 'path' : 'path is-none' }, core.exe || (core.status === 'unsupported' ? 'Not available on this operating system' : 'Not found')),
         core.exe && core.source ? h('dd', { class: 'path-source' }, sourceLabel(core.source)) : null),
-      core.id === 'project64' && core.status === 'unsupported'
-        ? h('p', { class: 'core-note' }, 'Project64 is Windows-only. On macOS and Linux it can run through Wine: install Wine, then set the path to a Project64.exe.') : null,
+      core.id === 'project64'
+        ? (core.status === 'unsupported'
+          ? h('p', { class: 'core-note' }, 'Project64 is Windows-only and can’t run on this system.')
+          : h('p', { class: 'core-note' },
+            'Project64 is a Windows program. On a Mac, Uemulator runs it through Wine: install the Wine runtime with ',
+            h('code', { class: 'cmd-inline' }, cmd),
+            ', download Project64.exe from pj64-emu.com, then use Set path… and choose Project64.exe.')) : null,
+      typeof core.detail === 'string' && core.detail.trim()
+        ? h('p', { class: 'core-detail' }, core.detail.trim()) : null,
       core.id === 'rpcs3'
         ? h('p', { class: 'core-note' }, 'RPCS3 needs PS3 firmware (PS3UPDAT.PUP) installed inside RPCS3 itself before games will boot.') : null,
       h('div', { class: 'core-actions' },
@@ -57,7 +64,7 @@ export function createCoresView() {
         h('button', { type: 'button', class: 'btn btn-sm', 'aria-disabled': overridden ? null : 'true', title: overridden ? 'Go back to automatic detection' : 'Already using automatic detection',
           onClick: () => { if (overridden) resetCorePath(core.id); } }, 'Reset')),
       core.status === 'ready' ? null : h('div', { class: 'core-build' },
-        h('span', { class: 'core-build-label' }, 'Build from source'),
+        h('span', { class: 'core-build-label' }, core.id === 'project64' ? 'Install Wine runtime' : 'Build from source'),
         h('code', { class: 'cmd' }, cmd),
         h('button', { type: 'button', class: 'icon-btn', 'aria-label': `Copy build command for ${core.name}`, title: 'Copy command', onClick: () => copy(cmd) }, icon('copy', 15))),
       h('div', { class: 'core-foot' },

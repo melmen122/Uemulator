@@ -176,9 +176,9 @@ test('game:launch with missing ROM file or uninstalled core throws readable erro
   } finally { t2.cleanup(); }
 });
 
-test('game:launch for n64 on linux without wine reports unsupported', async () => {
+test('game:launch for n64 on linux without wine/exe reports not installed (wine hint)', async () => {
   const t = harness([{ id: '444444444444', path: '/r/g.z64', system: 'n64' }]);
-  try { await assert.rejects(t.h['game:launch']('444444444444'), /not supported/); } finally { t.cleanup(); }
+  try { await assert.rejects(t.h['game:launch']('444444444444'), /not installed.*Wine|Wine/i); } finally { t.cleanup(); }
 });
 
 test('library:favorite toggles and persists; rejects unknown id', async () => {
@@ -234,5 +234,75 @@ test('registerIpc blocks calls from non-file frames', async () => {
     });
     assert.deepEqual(reg['game:sessions']({ senderFrame: { url: 'file:///app/index.html' } }), []);
     assert.throws(() => reg['game:sessions']({ senderFrame: { url: 'https://evil.example/' } }), /untrusted/);
+  } finally { t.cleanup(); }
+});
+
+// ---- project64 via wine on a fake darwin host ----
+function wineHarness({ withWine = true, exeMode = 0o644 } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uemu-wine-'));
+  const userData = path.join(dir, 'userData');
+  fs.mkdirSync(userData);
+  const exe = path.join(dir, 'My Games', 'Project64.exe');
+  fs.mkdirSync(path.dirname(exe));
+  fs.writeFileSync(exe, 'MZ', { mode: exeMode });
+  const fakeWine = '/fake/wine/bin/wine';
+  const store = createStore({ dir: userData });
+  store.setSettings({ corePaths: { project64: exe } });
+  store.setLibrary({ folders: [], games: [{ id: 'aaaaaaaaaaaa', title: 'N', path: '/r/g.z64', system: 'n64', lastPlayed: null, favorite: false, size: 1 }] });
+  const started = [];
+  const h = ipc.createHandlers({
+    store,
+    processes: { start: async (x) => { started.push(x); return { pid: 1, sessionId: 's' }; }, stop() {}, list: () => [] },
+    dialog: {}, shell: {}, getWindow: () => null,
+    fs: { ...fs, statSync: (p) => (p === '/r/g.z64' ? { isFile: () => true, isDirectory: () => false } : fs.statSync(p)) },
+    platform: 'darwin',
+    userDataDir: userData,
+    resolveDeps: { platform: 'darwin', which: (n) => (withWine && n === 'wine' ? fakeWine : null), binDir: '/nobin', homedir: '/h', env: {} },
+  });
+  return { h, started, userData, exe, fakeWine, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+}
+
+test('game:launch n64/project64 on darwin spawns wine with [exe, rom] and a prefix under userData', { skip: process.platform === 'win32' }, async () => {
+  const t = wineHarness();
+  try {
+    assert.deepEqual(await t.h['game:launch']('aaaaaaaaaaaa', { coreId: 'project64' }), { pid: 1, sessionId: 's' });
+    assert.equal(t.started.length, 1);
+    const s = t.started[0];
+    assert.equal(s.command, t.fakeWine);
+    assert.deepEqual(s.args, [t.exe, '/r/g.z64']);
+    assert.equal(s.env.WINEDEBUG, '-all');
+    assert.equal(s.env.WINEDLLOVERRIDES, 'mscoree,mshtml=');
+    const prefix = s.env.WINEPREFIX;
+    assert.equal(typeof prefix, 'string');
+    const rel = path.relative(t.userData, prefix);
+    assert.ok(rel && !rel.startsWith('..') && !path.isAbsolute(rel), `prefix ${prefix} inside userData`);
+    assert.ok(fs.statSync(prefix).isDirectory());
+    // default core for n64 also works without an explicit coreId
+    await t.h['game:launch']('aaaaaaaaaaaa');
+    assert.equal(t.started.length, 2);
+    assert.equal(t.started[1].command, t.fakeWine);
+  } finally { t.cleanup(); }
+});
+
+test('game:launch n64 without wine gives a readable Wine error and does not spawn', { skip: process.platform === 'win32' }, async () => {
+  const t = wineHarness({ withWine: false });
+  try {
+    await assert.rejects(t.h['game:launch']('aaaaaaaaaaaa'), /Wine/);
+    assert.equal(t.started.length, 0);
+    assert.deepEqual(fs.readdirSync(t.userData).filter((n) => n === 'wine'), []); // no prefix created for a failed launch
+  } finally { t.cleanup(); }
+});
+
+test('validateLaunchOptions still rejects env/args/extra/wine/prefixDir from the renderer', () => {
+  for (const key of ['env', 'args', 'extra', 'wine', 'prefixDir', 'command']) {
+    assert.throws(() => ipc.validateLaunchOptions({ coreId: 'project64', [key]: key === 'env' ? { WINEPREFIX: '/x' } : ['x'] }), Error, key);
+  }
+});
+
+test('game:launch rejects renderer-supplied env and spawns nothing', { skip: process.platform === 'win32' }, async () => {
+  const t = wineHarness();
+  try {
+    await assert.rejects(t.h['game:launch']('aaaaaaaaaaaa', { coreId: 'project64', env: { LD_PRELOAD: '/evil.so' } }));
+    assert.equal(t.started.length, 0);
   } finally { t.cleanup(); }
 });
