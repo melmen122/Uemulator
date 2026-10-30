@@ -34,7 +34,11 @@ separation. So the plan is:
 - **Platform reality**: Project64 has no native macOS or Linux build. On macOS/Linux its adapter runs
   the user-supplied `Project64.exe` through a Wine binary (`bin/wine/` on macOS, then the app-data link,
   then `wine` on PATH). It is Ready only when both the Wine binary and the exe are found; otherwise it
-  shows Not installed with a hint. The other five are cross-platform.
+  shows Not installed with a hint. On Windows (x64) Project64 runs natively as `Project64.exe`, with no
+  Wine. The other five run on macOS, Linux and Windows.
+- **Windows x64**: the app builds as an NSIS installer and a portable zip (`npm run dist:win`, both
+  unsigned). Core paths, PATH lookup, library folders and stop behaviour follow Windows rules (§3.4).
+  Windows is not yet tested on a real machine.
 
 ### Phase 2 (not in v1)
 - Embedded play: PyBoy runs headless in a Python bridge that streams frames into a `<canvas>`. mGBA
@@ -153,6 +157,13 @@ Settings shape: `{ fullscreen:false, gbCore:'mgba', corePaths:{ [coreId]: string
   resolution order above.
 - `child_process.spawn(cmd, args, { shell: false })`. No string-built commands.
 - `openExternal` is allow-listed to `http:`/`https:`. Navigation and `window.open` are denied.
+- Windows (`win32`) validators: a core executable must end in `.exe` (`validateCorePath`), because
+  there is no shell and `.bat`, `.cmd` and `.lnk` cannot be spawned. PATH lookup (`defaultWhich`) also
+  keeps only `.exe` and `.com`. A library folder cannot be a drive root (`C:\`) or the home folder. A UNC
+  share root (`\\nas\roms`) is allowed. `$RECYCLE.BIN` and `System Volume Information` are skipped.
+- Windows stop (`processes.js`): the stop request is `taskkill /PID <pid> /T` using the absolute path
+  `%SystemRoot%\System32\taskkill.exe`. After `KILL_GRACE_MS` (5 s) it runs `taskkill /PID <pid> /T /F`.
+  A failed graceful request escalates to `/F` at once. The app menu is hidden on Windows.
 - Adapter `env` is accepted only for the allowlist `WINEPREFIX`, `WINEDEBUG`, `WINEDLLOVERRIDES`
   (`ENV_ALLOWLIST` in `processes.js`). Values must be strings with no NUL and at most 4096 chars. A
   Wine child inherits the app environment minus `WINELOADER` and `DYLD_*`/`LD_*`. The renderer never
@@ -213,8 +224,12 @@ missing toolchain never fails the others.
 - v1 implemented: Electron shell, game library, six core adapters, build script, 134 unit tests.
 - Project64 on macOS via Wine: `build:cores -- project64` installs the Wine runtime, and the adapter
   resolves it per §3.2. Only Wine's own programs have been run. Project64 has not been run under Wine
-  yet. `npm test` now runs 193 unit tests.
+  yet. `npm test` now runs 255 unit tests.
 - PS3 / RPCS3 added: system table entry, EBOOT.BIN/USRDIR scanning, adapter, build script entry,
   PS3 UI filter and badge. The RPCS3 build has not been run on the dev machine.
+- Windows x64 support added: `win32` adapter paths (`cores/winpaths.js`), `.exe`-only core paths,
+  taskkill stop, `window.uemu.platform`, and `%APPDATA%\uemulator\` data. The NSIS installer
+  (per-user, choosable folder, desktop and Start menu shortcuts) and a portable zip are built by
+  `npm run dist:win`. Both are unsigned. Not yet run on a real Windows machine.
 - Not yet done: embedded play (phase 2), prebuilt core installer, real-emulator launch tests (none of
-  the six emulators, RPCS3 included, is installed on the dev machine).
+  the six emulators, RPCS3 included, is installed on the dev machine), and a Windows hardware test.

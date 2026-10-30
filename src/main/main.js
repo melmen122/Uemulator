@@ -1,6 +1,6 @@
 'use strict';
 const path = require('path');
-const { app, BrowserWindow, ipcMain, dialog, shell, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, session, Menu } = require('electron');
 const { createStore } = require('./store');
 const { createProcessManager } = require('./processes');
 const { registerIpc, RENDERER_INDEX_URL } = require('./ipc');
@@ -21,8 +21,14 @@ function sendToWindow(channel, payload) {
 
 const processes = createProcessManager({ emit: (ev) => sendToWindow('game:event', ev) });
 
+// Windows taskbar grouping / notifications / shortcuts key off this id; keep it equal to build.appId in package.json.
+if (process.platform === 'win32') app.setAppUserModelId('com.uemulator.app');
+
 function createWindow() {
   const isMac = process.platform === 'darwin';
+  // The default Windows menu bar (File/Edit/View/Window/Help) is unused and would expose Reload/DevTools.
+  // macOS keeps its standard app menu (needed for Cmd+Q/Cmd+C/Cmd+V).
+  if (process.platform === 'win32') Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -31,6 +37,7 @@ function createWindow() {
     backgroundColor: '#0f1115',
     show: false,
     title: 'Uemulator',
+    // Inset traffic lights are macOS-only; Windows/Linux keep the normal native frame.
     ...(isMac ? { titleBarStyle: 'hiddenInset' } : {}),
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),

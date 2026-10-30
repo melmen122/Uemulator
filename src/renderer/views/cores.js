@@ -1,4 +1,4 @@
-import { h, icon, clear, toast, viewHead } from '../ui.js';
+import { h, icon, clear, toast, viewHead, getPlatform } from '../ui.js';
 import { state, SYSTEMS, pickCorePath, resetCorePath, openExternal, refreshCores } from '../state.js';
 
 const STATUS = {
@@ -24,6 +24,22 @@ async function copy(text) {
   }
 }
 
+/** Project64 is a Windows program: native on Windows, via Wine on macOS, unavailable elsewhere. */
+function project64Note(core, cmd, os) {
+  if (os === 'win32') {
+    return h('p', { class: 'core-note' },
+      'Project64 runs natively on Windows. Download it from pj64-emu.com and use Set path… to choose Project64.exe, or install it to ',
+      h('code', { class: 'cmd-inline' }, 'C:\\Program Files (x86)\\Project64 3.0'), ' and it is found automatically.');
+  }
+  if (os === 'darwin' && core.status !== 'unsupported') {
+    return h('p', { class: 'core-note' },
+      'Project64 is a Windows program. On a Mac, Uemulator runs it through Wine: install the Wine runtime with ',
+      h('code', { class: 'cmd-inline' }, cmd),
+      ', download Project64.exe from pj64-emu.com, then use Set path… and choose Project64.exe.');
+  }
+  return h('p', { class: 'core-note' }, 'Project64 is Windows-only and can’t run on this system.');
+}
+
 export function createCoresView() {
   const grid = h('div', { class: 'core-grid' });
   const el = h('section', { class: 'view', 'aria-labelledby': 'cores-title' },
@@ -38,6 +54,7 @@ export function createCoresView() {
     const st = STATUS[core.status] || { label: String(core.status || 'Unknown'), cls: 'is-muted' };
     const overridden = !!(state.settings.corePaths || {})[core.id] || /override/i.test(core.source || '');
     const cmd = `npm run build:cores -- ${core.id}`;
+    const os = getPlatform();
     const systems = (core.systems || []).map((s) => h('span', { class: `badge sys-badge sys-${s}` }, (SYSTEMS[s] || { short: s }).short));
 
     return h('article', { class: `core-card${core.status === 'ready' ? '' : ' is-off'}`, 'aria-label': core.name },
@@ -48,13 +65,7 @@ export function createCoresView() {
         h('dt', null, 'Executable'),
         h('dd', { class: core.exe ? 'path' : 'path is-none' }, core.exe || (core.status === 'unsupported' ? 'Not available on this operating system' : 'Not found')),
         core.exe && core.source ? h('dd', { class: 'path-source' }, sourceLabel(core.source)) : null),
-      core.id === 'project64'
-        ? (core.status === 'unsupported'
-          ? h('p', { class: 'core-note' }, 'Project64 is Windows-only and can’t run on this system.')
-          : h('p', { class: 'core-note' },
-            'Project64 is a Windows program. On a Mac, Uemulator runs it through Wine: install the Wine runtime with ',
-            h('code', { class: 'cmd-inline' }, cmd),
-            ', download Project64.exe from pj64-emu.com, then use Set path… and choose Project64.exe.')) : null,
+      core.id === 'project64' ? project64Note(core, cmd, os) : null,
       typeof core.detail === 'string' && core.detail.trim()
         ? h('p', { class: 'core-detail' }, core.detail.trim()) : null,
       core.id === 'rpcs3'
@@ -63,10 +74,12 @@ export function createCoresView() {
         h('button', { type: 'button', class: 'btn btn-primary btn-sm', onClick: () => pickCorePath(core.id) }, icon('folder', 15), 'Set path…'),
         h('button', { type: 'button', class: 'btn btn-sm', 'aria-disabled': overridden ? null : 'true', title: overridden ? 'Go back to automatic detection' : 'Already using automatic detection',
           onClick: () => { if (overridden) resetCorePath(core.id); } }, 'Reset')),
-      core.status === 'ready' ? null : h('div', { class: 'core-build' },
-        h('span', { class: 'core-build-label' }, core.id === 'project64' ? 'Install Wine runtime' : 'Build from source'),
-        h('code', { class: 'cmd' }, cmd),
-        h('button', { type: 'button', class: 'icon-btn', 'aria-label': `Copy build command for ${core.name}`, title: 'Copy command', onClick: () => copy(cmd) }, icon('copy', 15))),
+      core.status === 'ready' ? null
+        : (os === 'win32' && core.id !== 'pyboy') ? (core.id === 'project64' ? null : h('p', { class: 'core-note' }, 'Download the official build from the homepage, then use Set path… and choose its .exe.'))
+        : h('div', { class: 'core-build' },
+          h('span', { class: 'core-build-label' }, core.id === 'project64' ? 'Install Wine runtime' : core.id === 'pyboy' ? 'Install (needs Python)' : 'Build from source'),
+          h('code', { class: 'cmd' }, cmd),
+          h('button', { type: 'button', class: 'icon-btn', 'aria-label': `Copy build command for ${core.name}`, title: 'Copy command', onClick: () => copy(cmd) }, icon('copy', 15))),
       h('div', { class: 'core-foot' },
         core.homepage ? h('button', { type: 'button', class: 'link', onClick: () => openExternal(core.homepage), 'aria-label': `${core.name} homepage (opens in your browser)` }, 'Homepage', icon('external', 13)) : null,
         core.license ? h('span', { class: 'core-license' }, `License ${core.license}`) : null));

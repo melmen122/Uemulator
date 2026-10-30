@@ -6,7 +6,9 @@ const crypto = require('crypto');
 const { detectSystem, isUsrdirEboot } = require('./systems');
 
 const MAX_DEPTH = 6;
-const SKIP_DIRS = new Set(['node_modules']);
+// Compared case-insensitively. The last two are Windows system folders present at the root of every NTFS drive
+// ($RECYCLE.BIN holds deleted files, System Volume Information is access-denied); harmless to skip everywhere.
+const SKIP_DIRS = new Set(['node_modules', '$recycle.bin', 'system volume information']);
 /** Hard cap on directory entries visited per scan (keeps a huge/runaway tree from hanging the app). */
 const MAX_ENTRIES = 200000;
 /** The async scan yields to the event loop every this many entries. */
@@ -110,6 +112,8 @@ function* walk(st, dir, depth) {
   if (st.stop) return;
   let real;
   try { real = yield ['realpath', dir]; } catch { return; }
+  // NTFS is case-insensitive: the same directory reached through differently-cased links must count once.
+  if (st.caseInsensitive) real = real.toLowerCase();
   if (st.visitedDirs.has(real)) return;
   st.visitedDirs.add(real);
 
@@ -122,7 +126,7 @@ function* walk(st, dir, depth) {
     if (st.visited % YIELD_EVERY === 0) yield ['tick'];
 
     const name = entry.name;
-    if (name.startsWith('.') || SKIP_DIRS.has(name)) continue;
+    if (name.startsWith('.') || SKIP_DIRS.has(name.toLowerCase())) continue;
     const full = nodePath.join(dir, name);
 
     let isDir = entry.isDirectory();
@@ -190,7 +194,8 @@ function* scanGen(folders, opts) {
     maxEntries: Number.isInteger(opts.maxEntries) && opts.maxEntries >= 0 ? opts.maxEntries : MAX_ENTRIES,
     prev: new Map((opts.previous || []).map((g) => [g.id, g])),
     found: new Map(), // id -> game
-    visitedDirs: new Set(), // real paths, guards against symlink loops
+    visitedDirs: new Set(), // real paths (junctions and symlinks included), guards against link loops
+    caseInsensitive: (opts.platform || process.platform) === 'win32',
     visited: 0,
     truncated: false,
     stop: false,

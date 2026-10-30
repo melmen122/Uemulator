@@ -22,11 +22,22 @@ function listCores() {
   return CORES.slice();
 }
 
-/** True when `p` is a regular file (and executable on POSIX). Real-fs default for deps.existsSync. */
-function isExecutableFile(p) {
+/** Windows launches only real executables (no shell): .exe (and legacy .com). X_OK is meaningless there. */
+const WIN_EXECUTABLE_RE = /\.(exe|com)$/i;
+
+/**
+ * True when `p` is a regular file that can be spawned: on POSIX it needs the X_OK bit; on Windows (where
+ * X_OK always succeeds) it must be a .exe/.com. Real-fs default for deps.existsSync.
+ * @param {string} p
+ * @param {{fs?:object, platform?:string}} [deps] injectable for tests
+ */
+function isExecutableFile(p, deps = {}) {
+  const fsImpl = deps.fs || fs;
+  const platform = deps.platform || process.platform;
   try {
-    if (!fs.statSync(p).isFile()) return false;
-    if (process.platform !== 'win32') fs.accessSync(p, fs.constants.X_OK);
+    if (!fsImpl.statSync(p).isFile()) return false;
+    if (platform === 'win32') return WIN_EXECUTABLE_RE.test(String(p));
+    fsImpl.accessSync(p, fs.constants.X_OK);
     return true;
   } catch {
     return false;
@@ -38,17 +49,28 @@ function isRegularFile(p) {
   try { return fs.statSync(p).isFile(); } catch { return false; }
 }
 
-/** Find `name` on PATH. Returns an absolute path or null. */
+/**
+ * Find `name` on PATH. Returns an absolute path or null.
+ * On win32 only .exe/.com hits count: the PATHEXT list is honoured but narrowed to what can be spawned without a
+ * shell (a .cmd/.bat hit would fail to launch), entries may be quoted, and a bare name never matches an
+ * extension-less file.
+ */
 function defaultWhich(name, deps = {}) {
   const platform = deps.platform || process.platform;
   const env = deps.env || process.env;
-  const exists = deps.existsSync || isExecutableFile;
+  const exists = deps.existsSync || ((p) => isExecutableFile(p, { platform }));
   const P = platform === 'win32' ? nodePath.win32 : nodePath.posix;
   if (typeof name !== 'string' || !name || /[\\/]/.test(name)) return null;
-  const dirs = String(env.PATH || env.Path || '').split(P.delimiter).filter(Boolean);
-  const exts = platform === 'win32'
-    ? ['', ...String(env.PATHEXT || '.EXE;.CMD;.BAT').split(';').filter(Boolean)]
-    : [''];
+  const strip = platform === 'win32' ? (d) => d.replace(/^"(.*)"$/, '$1') : (d) => d;
+  const dirs = String(env.PATH || env.Path || '').split(P.delimiter).map(strip).filter(Boolean);
+  let exts = [''];
+  if (platform === 'win32') {
+    if (WIN_EXECUTABLE_RE.test(name)) exts = [''];
+    else {
+      exts = String(env.PATHEXT || '.EXE;.CMD;.BAT').split(';').filter((e) => /^\.(exe|com)$/i.test(e));
+      if (exts.length === 0) exts = ['.EXE'];
+    }
+  }
   for (const dir of dirs) {
     for (const ext of exts) {
       const full = P.join(dir, name + ext);
@@ -125,7 +147,7 @@ function resolveWineCore(core, c) {
  */
 function resolveExecutable(core, settings = {}, deps = {}) {
   const platform = deps.platform || process.platform;
-  const existsSync = deps.existsSync || isExecutableFile;
+  const existsSync = deps.existsSync || ((p) => isExecutableFile(p, { platform }));
   const env = deps.env || process.env;
   const binDir = deps.binDir === undefined ? DEFAULT_BIN_DIR : deps.binDir;
   const homedir = deps.homedir === undefined ? os.homedir() : deps.homedir;
@@ -185,4 +207,4 @@ function describeCore(core, settings, deps) {
   return view;
 }
 
-module.exports = { CORES, DEFAULT_BIN_DIR, getCore, listCores, resolveExecutable, describeCore, defaultWhich, isExecutableFile };
+module.exports = { CORES, DEFAULT_BIN_DIR, getCore, listCores, resolveExecutable, describeCore, defaultWhich, isExecutableFile, WIN_EXECUTABLE_RE };

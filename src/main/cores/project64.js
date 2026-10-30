@@ -7,6 +7,7 @@
 // runtime (bundled at bin/wine/bin/wine by `npm run build:cores -- project64` on macOS, also linked at
 // <userData>/runtime/wine for the packaged app, else `wine` on PATH).
 const nodePath = require('path');
+const { windowsInstallCandidates } = require('./winpaths');
 
 // Env the launcher may set for the wine process; processes.js enforces the same allowlist.
 const WINE_ENV = Object.freeze({ WINEDEBUG: '-all', WINEDLLOVERRIDES: 'mscoree,mshtml=' });
@@ -28,15 +29,13 @@ module.exports = {
   bundleExecutables: [],
 
   candidates(ctx) {
-    const { platform, binDir, env = {} } = ctx;
+    const { platform, binDir, homedir = '', env = {} } = ctx;
     if (platform !== 'win32') return [];
     const P = pathFor(platform);
     const out = [];
     if (binDir) out.push(P.join(binDir, 'project64', 'Project64.exe'));
-    for (const base of [env.ProgramFiles, env['ProgramFiles(x86)']]) {
-      if (base) out.push(P.join(base, 'Project64 3.0', 'Project64.exe'), P.join(base, 'Project64', 'Project64.exe'));
-    }
-    if (env.LOCALAPPDATA) out.push(P.join(env.LOCALAPPDATA, 'Project64', 'Project64.exe'));
+    // Official installer: C:\Program Files (x86)\Project64 3.0\Project64.exe
+    out.push(...windowsInstallCandidates({ env, homedir }, ['Project64 3.0', 'Project64'], 'Project64.exe'));
     return out;
   },
 

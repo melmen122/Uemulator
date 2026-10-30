@@ -41,6 +41,10 @@ project64 on macOS: Project64 is Windows-only, so this step installs a Wine runt
 You still supply Project64.exe yourself (https://www.pj64-emu.com) and set its path in Settings.
 On Windows it builds Project64 from source with MSBuild. On Linux, install wine from your package manager.
 
+Windows: building every core from source needs Visual Studio Build Tools, CMake, Qt, the Vulkan SDK and more.
+Most people should instead download the official Windows builds (mGBA, Azahar, Ryujinx, RPCS3, Project64) and
+point the launcher at each .exe on the Cores page. Run this script from a "Developer PowerShell for VS 2022".
+
 Options:
   --check        only check toolchains (dry run); build nothing
   --jobs N       parallel build jobs (default: CPU count)
@@ -121,7 +125,8 @@ function run(cmd, args, opts = {}) {
 }
 
 function findPython() {
-  const names = PLATFORM === 'win32' ? ['python', 'py'] : ['python3'];
+  // Windows: prefer the `py` launcher (py.exe); plain `python` may be the Microsoft Store stub, which exits non-zero.
+  const names = PLATFORM === 'win32' ? ['py', 'python'] : ['python3'];
   for (const n of names) {
     const out = capture(n, ['-c', 'import sys;print("%d.%d" % sys.version_info[:2])']);
     if (out) return { cmd: n, version: out };
@@ -135,7 +140,8 @@ function findMsbuild() {
   if (PLATFORM === 'win32' && pf86) {
     const vswhere = path.join(pf86, 'Microsoft Visual Studio', 'Installer', 'vswhere.exe');
     if (fs.existsSync(vswhere)) {
-      const out = capture(vswhere, ['-latest', '-requires', 'Microsoft.Component.MSBuild', '-find', 'MSBuild\\**\\Bin\\MSBuild.exe']);
+      // `-products *` also matches the standalone Build Tools SKU, which vswhere skips by default.
+      const out = capture(vswhere, ['-latest', '-products', '*', '-requires', 'Microsoft.Component.MSBuild', '-find', 'MSBuild\\**\\Bin\\MSBuild.exe']);
       if (out) return out.split(/\r?\n/)[0];
     }
   }
@@ -460,6 +466,8 @@ const CORES = {
       if (PLATFORM === 'darwin') {
         const qt = capture('brew', ['--prefix', 'qt']);
         if (qt) cfg.push(`-DCMAKE_PREFIX_PATH=${qt}`);
+      } else if (PLATFORM === 'win32' && process.env.Qt6_ROOT) {
+        cfg.push(`-DCMAKE_PREFIX_PATH=${process.env.Qt6_ROOT}`);
       }
       if (!run('cmake', cfg)) return { ok: false, note: `configure failed. Needed libraries: ${hint('mgbaLibs')}` };
       if (!run('cmake', ['--build', build, '--config', 'Release', '--parallel', String(jobs)])) return { ok: false, note: 'build failed' };
@@ -497,6 +505,8 @@ const CORES = {
       if (PLATFORM === 'darwin') {
         const qt = capture('brew', ['--prefix', 'qt']);
         if (qt) cfg.push(`-DCMAKE_PREFIX_PATH=${qt}`);
+      } else if (PLATFORM === 'win32' && process.env.Qt6_ROOT) {
+        cfg.push(`-DCMAKE_PREFIX_PATH=${process.env.Qt6_ROOT}`);
       }
       if (!run('cmake', cfg)) return { ok: false, note: `configure failed. Needed libraries: ${hint('azaharLibs')}` };
       // Target citra_meta produces the "azahar" executable (src/citra_meta/CMakeLists.txt).
@@ -774,4 +784,5 @@ function main() {
 export { sha256File, assertSafeArchiveListing, assertSymlinksContained };
 
 // Only run when executed directly, so tests can import the helpers.
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) main();
+// realpath.native returns the on-disk spelling, so a differently-cased path on Windows still matches.
+if (process.argv[1] && fs.realpathSync.native(process.argv[1]) === fs.realpathSync.native(fileURLToPath(import.meta.url))) main();

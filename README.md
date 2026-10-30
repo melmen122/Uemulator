@@ -5,11 +5,13 @@ folders, Uemulator detects each game's system, and Play starts the matching emul
 process with live logs and a Stop button. Each emulator is an unmodified git submodule under
 `cores/<id>`; Uemulator only finds and launches them.
 
+Uemulator runs on macOS, Linux and Windows x64. See [Windows](#windows) for the Windows install.
+
 ## Supported systems
 
 | System | Extensions | Core | Upstream | License |
 |---|---|---|---|---|
-| Nintendo 64 | `.z64` `.n64` `.v64` | Project64 (macOS via Wine) | https://github.com/project64/project64 | GPL-2.0 |
+| Nintendo 64 | `.z64` `.n64` `.v64` | Project64 (Windows native; macOS and Linux via Wine) | https://github.com/project64/project64 | GPL-2.0 |
 | Nintendo Switch | `.nsp` `.xci` `.nca` `.nro` | Ryujinx (Ryubing) | https://git.ryujinx.app/ryubing/ryujinx | MIT |
 | Nintendo 3DS | `.3ds` `.cci` `.cxi` `.cia` `.3dsx` `.app` | Azahar | https://github.com/azahar-emu/azahar | GPL-2.0 |
 | Game Boy Advance | `.gba` | mGBA | https://github.com/mgba-emu/mgba | MPL-2.0 |
@@ -46,6 +48,7 @@ npm start
 ```
 
 Then add a ROM folder on the Library page. Games with a missing core show a warning on their card.
+On Windows, follow the [Windows](#windows) section instead.
 
 ## Executable resolution
 
@@ -54,10 +57,13 @@ For each core, Uemulator uses the first match:
 1. **Override path** set on the Cores page ("Set path…"). Stored in Settings.
 2. **Built binary** in `bin/<id>/`, produced by `npm run build:cores`.
 3. **System install** locations, for example `/Applications/mGBA.app`, `/opt/homebrew/bin`,
-   `/usr/bin`, or `%ProgramFiles%` on Windows.
+   `/usr/bin`. On Windows, see [Windows](#windows) for the folders searched.
 4. **PATH** lookup by name, for example `mgba-qt`, `mgba`, `pyboy`, `azahar`, `Ryujinx`, `rpcs3`.
+   On Windows only `.exe` hits count, so `.cmd` and `.bat` files on PATH are ignored.
 
-Project64 has no macOS or Linux build. On macOS and Linux, Uemulator runs the `Project64.exe` you set
+On Windows, a chosen emulator path must end in `.exe`. Shortcuts, `.bat` and `.cmd` files are refused.
+
+Project64 has no macOS or Linux build. On Windows it runs natively. On macOS and Linux, Uemulator runs the `Project64.exe` you set
 as the override through Wine. The Wine binary is the first match from:
 
 - `bin/wine/bin/wine`, installed by `npm run build:cores -- project64` on macOS
@@ -108,16 +114,117 @@ URL and SHA-256) is the same pinned Wine build that neutron uses (OmniTroid/neut
 https://github.com/OmniTroid/neutron).
 Uemulator downloads the Gcenx build itself. It does not use neutron's Steam bridge or DXMT.
 
+## Windows
+
+Uemulator runs on Windows x64. Project64 runs natively there, so no Wine is needed. The Windows
+build has not been run on a real Windows machine yet. Treat it as untested until you have checked it.
+
+### Install
+
+Use one of the two files built by `npm run dist:win` (see [Building the installer](#building-the-installer)):
+
+- **Installer:** `dist/Uemulator-Setup-0.1.0-x64.exe`. It is a per-user install. You choose the install
+  folder, and it adds desktop and Start menu shortcuts.
+- **Portable:** `dist/Uemulator-0.1.0-win-x64.zip`. Unzip it and run `Uemulator.exe`.
+
+Both files are unsigned, so SmartScreen may warn. Click **More info**, then **Run anyway**.
+
+To run from source, use PowerShell or cmd:
+
+```bat
+git clone --recurse-submodules <repo-url> uemulator
+cd uemulator
+npm install
+npm start
+```
+
+### First run
+
+Settings and the library are saved in `%APPDATA%\uemulator\uemulator.json`. Add a ROM folder on the
+Library page. Windows folder rules:
+
+- A drive root (`C:\`) and your home folder cannot be added. Choose a folder inside them.
+- UNC shares such as `\\nas\roms` work.
+- `$RECYCLE.BIN` and `System Volume Information` are skipped.
+
+### Setting emulator paths
+
+Auto-detect looks in these places, in this order:
+
+1. `bin\<id>\` in the repo, built by `npm run build:cores`. A packaged app does not look here, only
+   `npm start` does.
+2. `Program Files`, `Program Files (x86)` and `ProgramW6432`.
+3. `%LOCALAPPDATA%\Programs`, then `%LOCALAPPDATA%`.
+4. Your home folder and the drive root, one folder deep, for example `C:\mGBA\mGBA.exe`.
+5. PATH (`.exe` files only).
+
+If auto-detect misses a core, open **Cores**, choose **Set path…**, and pick the `.exe`. Only `.exe`
+files are accepted.
+
+Official Windows downloads:
+
+| Core | Systems | Download | File to choose |
+|---|---|---|---|
+| mGBA | GBA, GB, GBC | https://mgba.io | `mGBA.exe` |
+| Azahar | 3DS | https://azahar-emu.org | `azahar.exe` |
+| Ryujinx (Ryubing) | Switch | https://ryujinx.app | `Ryujinx.exe` |
+| RPCS3 | PS3 | https://rpcs3.net | `rpcs3.exe` (portable build, extract anywhere) |
+| Project64 3.x | N64 | https://www.pj64-emu.com | `Project64.exe`. Install to `C:\Program Files (x86)\Project64 3.0`, or use the zip. |
+| PyBoy | GB, GBC (optional) | `npm run build:cores -- pyboy` | `bin\pyboy\venv\Scripts\python.exe`, or `pyboy.exe` on PATH |
+
+RPCS3 needs PS3 firmware installed inside RPCS3 before games boot. Uemulator does not install it.
+
+### Building cores on Windows (optional)
+
+Building from source is heavy. Most people should use the official builds above. To build, open a
+Developer PowerShell for VS 2022 and run:
+
+```powershell
+node scripts/build-cores.mjs --check
+npm run build:cores -- pyboy
+```
+
+The script checks for Visual Studio Build Tools (MSBuild), CMake, Qt 6 (set `Qt6_ROOT`), the Vulkan
+SDK (sets `VULKAN_SDK`, for RPCS3) and the .NET SDK (for Ryujinx). The Building cores table lists each
+core's requirements.
+
+### Building the installer
+
+```sh
+npm run dist:win
+```
+
+This builds the NSIS installer and the zip for x64 into `dist/`. The settings are in the `build` section
+of `package.json`. The Windows targets build from macOS or Linux without Wine. The output has not been
+installed on Windows yet.
+
+### Windows limitations
+
+- Not tested on real Windows hardware yet.
+- Unsigned. SmartScreen may block the first run.
+- Stop asks the emulator to close. If it has not exited after about 5 seconds, Uemulator force-ends its
+  whole process tree, so unsaved progress can be lost.
+- The app menu is hidden on Windows.
+- Core builds in the repo's `bin\` are found only by `npm start`, not by the installed app.
+- Project64 does not open ROMs with non-ASCII file names. This also applies on Windows. See Known limitations.
+
 ## Where data is stored
 
 - **Settings and library:** one JSON file, `uemulator.json`, in Electron's `userData` directory for
   the app (`app.getPath('userData')`). The app name comes from `package.json` (`uemulator`). On macOS
-  this is `~/Library/Application Support/uemulator/`.
+  this is `~/Library/Application Support/uemulator/`. On Windows it is `%APPDATA%\uemulator\`.
 - Writes go to a `.tmp` file that is then renamed over the old one. If the file is not valid JSON,
   it is renamed to `uemulator.json.corrupt` and defaults are used.
 - Built cores live in `bin/` (gitignored).
 - Wine prefixes live in `<userData>/wine/<coreId>/`. Project64 is the only Wine-run core, so this is
   `~/Library/Application Support/uemulator/wine/project64/` on macOS. Uemulator creates it with mode 0700.
+
+### Moving to another machine
+
+- Settings, the library and the Wine prefix are per machine. They are not carried over automatically.
+- ROMs and game data are not part of Uemulator. Copy your ROM folders yourself.
+- For PS3, install the firmware in RPCS3 again on the new machine.
+- Windows RPCS3 is the best-supported RPCS3 platform.
 
 ## Keyboard shortcuts
 
@@ -138,9 +245,10 @@ the button on the Running panel.
 ## Development
 
 ```sh
-npm test          # node --test "tests/**/*.test.js" (193 unit tests)
+npm test          # node --test "tests/**/*.test.js" (255 unit tests)
 npm start         # run the app
 npm run dist      # electron-builder packaging
+npm run dist:win  # Windows x64 NSIS installer and zip (see Windows)
 ```
 
 Add `?mock` to the renderer URL to preview the UI with sample data (`?mock=empty` for the empty state).
@@ -172,7 +280,8 @@ plan.md          architecture and contracts
 - `launch` takes only a game id that is in the library. The renderer cannot pass a path or command.
   Executables come only from the resolution order above.
 - Emulators are started with `spawn(cmd, args, { shell: false })`. Stop sends SIGTERM and falls back
-  to SIGKILL after 5 seconds. Running games are stopped when the app quits.
+  to SIGKILL after 5 seconds. On Windows, Stop uses `taskkill` instead: a close request, then a forced
+  end of the process tree after 5 seconds. Running games are stopped when the app quits.
 - Only the Wine launch sets environment variables, and only `WINEPREFIX`, `WINEDEBUG` and
   `WINEDLLOVERRIDES` (an allowlist in `processes.js`). The child inherits the app's environment
   without `WINELOADER`, `DYLD_*` or `LD_*`. The renderer cannot set any of these.
@@ -184,6 +293,8 @@ plan.md          architecture and contracts
 - No prebuilt core installer. Cores must be built locally or installed by hand.
 - Build paths for cmake, .NET and RPCS3 are untested on the development machine. None of the six
   emulators is installed there, so real-emulator launches are untested.
+- The Windows x64 build has not been run on a real Windows machine. Installer, auto-detect, Stop and
+  Project64 are all unverified there. See [Windows](#windows).
 - Project64 on macOS runs under Wine and Rosetta 2. Only the Wine runtime has been checked here
   (`wine --version` and a `cmd /c ver` smoke test). Project64 itself has not been run under Wine in
   this repo.

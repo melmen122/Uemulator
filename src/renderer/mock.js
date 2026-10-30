@@ -2,8 +2,12 @@
 //   ?mock            sample library, mixed core statuses
 //   ?mock=empty      no games / no folders (empty state)
 //   ?mock&sessions=1 starts with one running session streaming logs
+//   ?mock&platform=darwin|win32|linux  platform reported by the bridge (default darwin)
 //   ?mock&theme=light|dark  initial theme setting;  ?view=cores|running|settings opens that view
 const params = new URLSearchParams(location.search);
+const PLATFORMS = ['darwin', 'win32', 'linux'];
+const PLATFORM = PLATFORMS.includes(params.get('platform')) ? params.get('platform') : 'darwin';
+
 const EMPTY = params.get('mock') === 'empty';
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const clone = (v) => structuredClone(v);
@@ -46,12 +50,12 @@ let games = EMPTY ? [] : [
 let settings = { fullscreen: false, gbCore: 'mgba', corePaths: {}, theme: params.get('theme') || 'system' };
 
 const CORE_DEFS = [
-  { id: 'project64', name: 'Project64', systems: ['n64'], homepage: 'https://www.pj64-emu.com', license: 'GPL-2.0', base: { status: 'unsupported', exe: null, source: null } },
+  { id: 'project64', name: 'Project64', systems: ['n64'], homepage: 'https://www.pj64-emu.com', license: 'GPL-2.0', base: PLATFORM === 'win32' ? { status: 'missing', exe: null, source: null } : { status: 'unsupported', exe: null, source: null } },
   { id: 'rpcs3', name: 'RPCS3', systems: ['ps3'], homepage: 'https://rpcs3.net', license: 'GPL-2.0', base: { status: 'missing', exe: null, source: null } },
   { id: 'ryujinx', name: 'Ryujinx', systems: ['switch'], homepage: 'https://ryujinx.app', license: 'MIT', base: { status: 'missing', exe: null, source: null } },
   { id: 'azahar', name: 'Azahar', systems: ['3ds'], homepage: 'https://azahar-emu.org', license: 'GPL-2.0', base: { status: 'ready', exe: '/Users/demo/Uemulator/bin/azahar/azahar', source: 'built' } },
   { id: 'pyboy', name: 'PyBoy', systems: ['gb', 'gbc'], homepage: 'https://github.com/Baekalfen/PyBoy', license: 'LGPL-3.0', base: { status: 'missing', exe: null, source: null } },
-  { id: 'mgba', name: 'mGBA', systems: ['gba', 'gbc', 'gb'], homepage: 'https://mgba.io', license: 'MPL-2.0', base: { status: 'ready', exe: '/Applications/mGBA.app/Contents/MacOS/mGBA', source: 'system' } },
+  { id: 'mgba', name: 'mGBA', systems: ['gba', 'gbc', 'gb'], homepage: 'https://mgba.io', license: 'MPL-2.0', base: { status: 'ready', exe: PLATFORM === 'win32' ? 'C:\\Program Files\\mGBA\\mGBA.exe' : '/Applications/mGBA.app/Contents/MacOS/mGBA', source: 'system' } },
 ];
 
 function coreView(def) {
@@ -102,6 +106,7 @@ function extraGames(folder) {
 }
 
 window.uemu = {
+  platform: PLATFORM,
   async getCores() { await wait(120); return clone(CORE_DEFS.map(coreView)); },
   async setCorePath(id, path) {
     const def = CORE_DEFS.find((c) => c.id === id);

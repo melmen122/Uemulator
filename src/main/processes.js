@@ -3,6 +3,7 @@
 // No Electron dependency; spawn/emit/clock are injectable for tests.
 const childProcess = require('child_process');
 const crypto = require('crypto');
+const nodePath = require('path');
 
 const MAX_LOG_LINES = 500;
 const MAX_LINE_LEN = 4000;
@@ -41,8 +42,19 @@ function inheritedEnvForWine(base) {
   return out;
 }
 
+/** Absolute path of taskkill.exe (never resolved through PATH, so a planted taskkill.exe in the cwd/PATH is ignored). */
+function taskkillPath(env = process.env) {
+  // Only trust an absolute drive path (e.g. C:\Windows); anything else (relative, UNC, empty) falls back.
+  const ABS_DRIVE = /^[A-Za-z]:\\/;
+  const fromEnv = [env && env.SystemRoot, env && env.windir].find((v) => typeof v === 'string' && ABS_DRIVE.test(v));
+  const root = fromEnv || 'C:\\Windows';
+  return nodePath.win32.join(root, 'System32', 'taskkill.exe');
+}
+
 /**
- * @param {{spawn?:Function, emit?:(ev:object)=>void, now?:()=>number, killGraceMs?:number, flushIntervalMs?:number, exitCloseGraceMs?:number}} [opts]
+ * @param {{spawn?:Function, emit?:(ev:object)=>void, now?:()=>number, killGraceMs?:number, flushIntervalMs?:number, exitCloseGraceMs?:number, platform?:string, env?:object}} [opts]
+ *   `platform` (default process.platform) selects the stop strategy: on win32 the whole process tree is stopped with taskkill.
+ *   `env` (default process.env) is only used to locate taskkill.exe (SystemRoot/windir).
  */
 function createProcessManager(opts = {}) {
   const spawn = opts.spawn || childProcess.spawn;
@@ -51,6 +63,8 @@ function createProcessManager(opts = {}) {
   const killGraceMs = opts.killGraceMs ?? KILL_GRACE_MS;
   const flushIntervalMs = opts.flushIntervalMs ?? FLUSH_INTERVAL_MS;
   const exitCloseGraceMs = opts.exitCloseGraceMs ?? EXIT_CLOSE_GRACE_MS;
+  const isWin = (opts.platform || process.platform) === 'win32';
+  const hostEnv = opts.env || process.env;
   /** @type {Map<string, object>} */
   const sessions = new Map();
 
@@ -116,11 +130,13 @@ function createProcessManager(opts = {}) {
    * Spawn a game. Resolves with {pid, sessionId} once the process actually started;
    * rejects with a readable Error if it could not be spawned.
    */
-  function start({ gameId, coreId, command, args, env }) {
+  function start({ gameId, coreId, command, args, env, windowsHide }) {
     return new Promise((resolve, reject) => {
       let child;
       try {
         const spawnOpts = { shell: false, detached: false, stdio: ['ignore', 'pipe', 'pipe'] };
+        // Only when the adapter asks (console apps like PyBoy); hiding globally can hide a GUI emulator's first window.
+        if (windowsHide === true) spawnOpts.windowsHide = true;
         const extra = sanitizeEnv(env);
         if (Object.keys(extra).length > 0) spawnOpts.env = { ...inheritedEnvForWine(process.env), ...extra };
         child = spawn(command, args, spawnOpts);
@@ -130,7 +146,7 @@ function createProcessManager(opts = {}) {
       }
       const s = {
         sessionId: crypto.randomUUID(), gameId, coreId, child, pid: child.pid,
-        startedAt: now(), log: [], queue: [], dropped: 0, timer: null, killTimer: null, exitTimer: null, exited: false, started: false, detachers: [],
+        startedAt: now(), log: [], queue: [], dropped: 0, timer: null, killTimer: null, exitTimer: null, exited: false, childExited: false, stopRequested: false, forceRequested: false, started: false, detachers: [],
       };
 
       // `on`, not `once`: a later error (e.g. EPERM from child.kill()) must never become an uncaught exception.
@@ -172,6 +188,10 @@ function createProcessManager(opts = {}) {
       };
       child.once('close', finish);
       child.once('exit', (code, signal) => {
+        // Node closes the process handle at 'exit' on Windows, so the PID may be reused from here on:
+        // from now on nothing may signal / taskkill this PID.
+        s.childExited = true;
+        if (s.killTimer) { clearTimeout(s.killTimer); s.killTimer = null; }
         if (s.exited || s.exitTimer) return;
         s.exitTimer = setTimeout(() => { s.exitTimer = null; finish(code, signal); }, exitCloseGraceMs);
         if (s.exitTimer.unref) s.exitTimer.unref();
@@ -179,19 +199,59 @@ function createProcessManager(opts = {}) {
     });
   }
 
+  /**
+   * Windows: child.kill() is TerminateProcess on the launcher only, and emulators may spawn helpers (or be a
+   * launcher stub), so stop the whole tree with `taskkill /PID <pid> /T [/F]` (array args, no shell, absolute
+   * exe path, integer pid). Without /F taskkill asks the windows to close (WM_CLOSE: a graceful exit);
+   * with /F the tree is terminated; a failed graceful request escalates to /F immediately. If taskkill cannot be
+   * started, fall back to child.kill().
+   */
+  function taskkill(s, force) {
+    if (s.exited || s.childExited) return; // PID may already be recycled: never taskkill it
+    if (force) { if (s.forceRequested) return; s.forceRequested = true; }
+    const pid = s.child.pid;
+    const fallback = () => { try { s.child.kill(); } catch { /* already gone */ } };
+    if (!Number.isInteger(pid) || pid <= 0) { fallback(); return; }
+    try {
+      const tk = spawn(taskkillPath(hostEnv), ['/PID', String(pid), '/T', ...(force ? ['/F'] : [])], { shell: false, stdio: 'ignore', windowsHide: true });
+      if (tk && typeof tk.on === 'function') {
+        tk.on('error', fallback);
+        // A non-zero exit of the graceful request (e.g. "can only be terminated forcefully": no window to close)
+        // means waiting is pointless, so escalate right away instead of after the grace period.
+        if (!force) tk.on('exit', (code) => { if (typeof code === 'number' && code !== 0 && !s.exited && !s.childExited) taskkill(s, true); });
+      }
+      if (tk && typeof tk.unref === 'function') tk.unref();
+    } catch { fallback(); }
+  }
+
+  /** Graceful stop request: SIGTERM (POSIX) / taskkill /T without /F (Windows). */
+  function requestStop(s) {
+    if (s.exited || s.childExited) return;
+    if (isWin) taskkill(s, false);
+    else { try { s.child.kill('SIGTERM'); } catch { /* already gone */ } }
+  }
+
+  /** Forced stop: SIGKILL (POSIX) / taskkill /T /F (Windows). */
+  function forceKill(s) {
+    if (s.exited || s.childExited) return;
+    if (isWin) taskkill(s, true);
+    else { try { s.child.kill('SIGKILL'); } catch { /* ignore */ } }
+  }
+
   function terminate(s) {
-    if (s.exited) return;
-    try { s.child.kill('SIGTERM'); } catch { /* already gone */ }
+    if (s.exited || s.childExited || s.stopRequested) return;
+    s.stopRequested = true;
+    requestStop(s);
     if (!s.killTimer) {
       s.killTimer = setTimeout(() => {
         s.killTimer = null;
-        if (!s.exited) { try { s.child.kill('SIGKILL'); } catch { /* ignore */ } }
+        forceKill(s);
       }, killGraceMs);
       if (s.killTimer.unref) s.killTimer.unref();
     }
   }
 
-  /** SIGTERM, then SIGKILL after the grace period. @returns {boolean} whether the session existed */
+  /** Graceful stop (SIGTERM / taskkill /T), then forced (SIGKILL / taskkill /T /F) after the grace period. @returns {boolean} whether the session existed */
   function stop(sessionId) {
     const s = sessions.get(sessionId);
     if (!s) return false;
@@ -223,8 +283,9 @@ function createProcessManager(opts = {}) {
       for (const s of live) terminate(s);
       const poll = setInterval(() => { if (live.every((s) => s.exited)) done(); }, 50);
       const limit = setTimeout(() => {
-        for (const s of live) if (!s.exited) { try { s.child.kill('SIGKILL'); } catch { /* ignore */ } }
-        done();
+        for (const s of live) forceKill(s);
+        // taskkill is asynchronous: give it a moment to start before the launcher itself exits.
+        if (isWin) setTimeout(done, 300); else done();
       }, timeoutMs);
     });
   }
@@ -232,4 +293,4 @@ function createProcessManager(opts = {}) {
   return { start, stop, list, getLog, killAll, get size() { return sessions.size; } };
 }
 
-module.exports = { createProcessManager, MAX_LOG_LINES, ENV_ALLOWLIST, sanitizeEnv };
+module.exports = { createProcessManager, taskkillPath, MAX_LOG_LINES, ENV_ALLOWLIST, sanitizeEnv };

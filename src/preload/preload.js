@@ -5,6 +5,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 const invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args);
 
 contextBridge.exposeInMainWorld('uemu', {
+  // Read-only host OS ('darwin' | 'win32' | 'linux') so the renderer can adapt its chrome (title bar, shortcuts).
+  platform: process.platform,
   getCores: () => invoke('cores:list'),
   setCorePath: (id, path) => invoke('cores:setPath', id, path),
   pickFile: (kind) => invoke('dialog:pickFile', kind),

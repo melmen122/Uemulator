@@ -4,6 +4,7 @@
 // (`default: LaunchPathArg = arg`, line 213). Executable is named "Ryujinx"
 // (cores/ryujinx/distribution/macos/create_app_bundle.sh copies it to Ryujinx.app/Contents/MacOS/Ryujinx).
 const nodePath = require('path');
+const { windowsInstallCandidates } = require('./winpaths');
 
 function pathFor(platform) { return platform === 'win32' ? nodePath.win32 : nodePath.posix; }
 
@@ -28,9 +29,8 @@ module.exports = {
         P.join(homedir, 'Applications', 'Ryujinx.app', 'Contents', 'MacOS', 'Ryujinx')
       );
     } else if (platform === 'win32') {
-      for (const base of [env.ProgramFiles, env.LOCALAPPDATA && P.join(env.LOCALAPPDATA, 'Programs')]) {
-        if (base) out.push(P.join(base, 'Ryujinx', 'Ryujinx.exe'));
-      }
+      // The official Windows build is a zip (Ryujinx\Ryujinx.exe, or Ryujinx\publish\Ryujinx.exe as built from source).
+      out.push(...windowsInstallCandidates({ env, homedir }, ['Ryujinx', 'Ryujinx\\publish'], 'Ryujinx.exe'));
     } else {
       out.push('/opt/ryujinx/Ryujinx', '/usr/bin/Ryujinx', '/usr/local/bin/Ryujinx', '/usr/bin/ryujinx', '/usr/local/bin/ryujinx');
     }

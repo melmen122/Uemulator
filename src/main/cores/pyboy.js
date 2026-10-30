@@ -24,6 +24,8 @@ module.exports = {
   license: 'LGPL-3.0',
   pathNames: ['pyboy'],
   bundleExecutables: [],
+  // Console app on Windows: hide the empty console window it would pop up when spawned from the GUI app.
+  windowsHide: true,
 
   candidates(ctx) {
     const { platform, binDir } = ctx;

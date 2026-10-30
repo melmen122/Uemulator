@@ -1,5 +1,5 @@
 // Uemulator renderer entry. Shell (nav, banner, toasts) + view wiring. No framework, no innerHTML.
-import { h, icon, logoMark, clear, mountToasts } from './ui.js';
+import { h, icon, logoMark, clear, mountToasts, getPlatform } from './ui.js';
 import { state, subscribe, setView, boot, activeSessionCount, applyTheme } from './state.js';
 import { createLibraryView } from './views/library.js';
 import { createRunningView } from './views/running.js';
@@ -9,11 +9,12 @@ import { createSettingsView } from './views/settings.js';
 async function main() {
   const root = document.documentElement;
   root.classList.add('is-booting'); // suppress transitions while the saved theme is applied
-  if (/Mac/i.test(navigator.platform || navigator.userAgent)) root.classList.add('is-mac');
 
   if (location.search.includes('mock')) {
     await import('./mock.js');
   }
+  // After the mock loads, so ?mock&platform=win32 previews the Windows chrome.
+  root.classList.add({ darwin: 'is-mac', win32: 'is-win', linux: 'is-linux' }[getPlatform()]);
 
   mountToasts(document.getElementById('toasts'));
   for (const slot of document.querySelectorAll('[data-icon]')) slot.append(icon(slot.dataset.icon, 18));

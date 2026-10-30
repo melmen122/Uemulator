@@ -5,6 +5,7 @@
 // "mGBA" on APPLE/WIN32 -> mGBA.app/Contents/MacOS/mGBA) and src/platform/sdl/CMakeLists.txt
 // (SDL frontend is "mgba").
 const nodePath = require('path');
+const { windowsInstallCandidates } = require('./winpaths');
 
 function pathFor(platform) { return platform === 'win32' ? nodePath.win32 : nodePath.posix; }
 
@@ -43,9 +44,8 @@ module.exports = {
         '/usr/local/bin/mgba-qt', '/usr/local/bin/mgba'
       );
     } else if (platform === 'win32') {
-      for (const base of [env.ProgramFiles, env['ProgramFiles(x86)'], env.LOCALAPPDATA && P.join(env.LOCALAPPDATA, 'Programs')]) {
-        if (base) out.push(P.join(base, 'mGBA', 'mGBA.exe'));
-      }
+      // Installer: C:\Program Files\mGBA\mGBA.exe; portable zips are usually unpacked under the user's folders.
+      out.push(...windowsInstallCandidates({ env, homedir }, ['mGBA'], 'mGBA.exe'));
     } else {
       out.push('/usr/bin/mgba-qt', '/usr/bin/mgba', '/usr/local/bin/mgba-qt', '/usr/local/bin/mgba', '/snap/bin/mgba-qt');
     }

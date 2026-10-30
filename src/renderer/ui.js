@@ -3,6 +3,16 @@
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+/** 'darwin' | 'win32' | 'linux'. Prefers the preload's window.uemu.platform; falls back to the browser for plain/?mock previews. */
+export function getPlatform() {
+  const p = window.uemu && window.uemu.platform;
+  if (p === 'darwin' || p === 'win32' || p === 'linux') return p;
+  const ua = navigator.userAgentData?.platform || navigator.platform || navigator.userAgent || '';
+  if (/mac/i.test(ua)) return 'darwin';
+  if (/win/i.test(ua)) return 'win32';
+  return 'linux';
+}
+
 /** h('div', {class:'x', onClick}, 'text', childNode, [more]) */
 export function h(tag, props, ...children) {
   const el = document.createElement(tag);

@@ -16,6 +16,11 @@ const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 const RENDERER_INDEX_URL = nodeUrl.pathToFileURL(nodePath.join(__dirname, '../renderer/index.html')).href;
 const PICK_KINDS = Object.freeze(['exe', 'rom']);
 
+/** path module matching `platform`, so Windows paths are handled correctly even when validated on another host. */
+const pathFor = (platform) => (platform === 'win32' ? nodePath.win32 : nodePath.posix);
+/** Normalises a path for equality checks: case-insensitive on Windows (NTFS), exact elsewhere. */
+const pathKey = (p, platform) => (platform === 'win32' ? p.toLowerCase() : p);
+
 // ---------- validators (exported) ----------
 
 function assertString(value, name, { max = 256, allowEmpty = false } = {}) {
@@ -53,24 +58,26 @@ function validatePickKind(kind) {
 }
 
 /** Absolute path string check only (no I/O). */
-function validateAbsolutePath(p, name = 'Path') {
+function validateAbsolutePath(p, name = 'Path', { platform = process.platform } = {}) {
   assertString(p, name, { max: MAX_PATH_LEN });
-  if (!nodePath.isAbsolute(p)) throw new Error(`${name} must be an absolute path`);
-  return nodePath.resolve(p);
+  const P = pathFor(platform);
+  if (!P.isAbsolute(p)) throw new Error(`${name} must be an absolute path`);
+  return P.resolve(p);
 }
 
-function validateFolderPath(p, { fs = nodeFs, homedir } = {}) {
-  const abs = validateAbsolutePath(p, 'Folder path');
-  // Refuse the filesystem root and the home folder itself: scanning them walks a huge tree.
-  if (nodePath.parse(abs).root === abs) throw new Error('Choose a more specific folder than the root of the drive');
+function validateFolderPath(p, { fs = nodeFs, homedir, platform = process.platform } = {}) {
+  const P = pathFor(platform);
+  const abs = validateAbsolutePath(p, 'Folder path', { platform });
+  if (platform === 'win32' && /^\\\\[?.]\\/.test(abs)) throw new Error('Choose the folder using its normal path (not a \\\\?\\ or \\\\.\\ device path)');
+  // Refuse the filesystem root (a drive such as C:\) and the home folder itself: scanning them walks a huge tree.
+  // A UNC share root (\\nas\roms) is allowed: that is the normal way to point at a network ROM share.
+  const root = P.parse(abs).root;
+  const isUncShareRoot = platform === 'win32' && /^\\\\[^\\]+\\[^\\]+\\?$/.test(root);
+  if (root === abs && !isUncShareRoot) throw new Error('Choose a more specific folder than the root of the drive');
   let home = homedir;
   if (home === undefined) { try { home = nodeOs.homedir(); } catch { home = null; } }
-  if (typeof home === 'string' && home.length > 0) {
-    const norm = (x) => {
-      const r = nodePath.resolve(x);
-      return process.platform === 'win32' ? r.toLowerCase() : r;
-    };
-    if (norm(home) === norm(abs)) throw new Error('Choose a more specific folder than your home folder');
+  if (typeof home === 'string' && home.length > 0 && P.isAbsolute(home)) {
+    if (pathKey(P.resolve(home), platform) === pathKey(abs, platform)) throw new Error('Choose a more specific folder than your home folder');
   }
   let st;
   try { st = fs.statSync(abs); } catch { throw new Error('That folder does not exist'); }
@@ -120,20 +127,25 @@ function resolveAppBundle(appPath, core, { fs = nodeFs } = {}) {
 
 /**
  * Validate a user-chosen executable for a core and return the path to store.
- * Must be absolute, exist, and be a file (or a macOS .app bundle, resolved to its inner executable).
+ * Must be absolute, exist, and be a file. macOS/Linux: a .app bundle is resolved to its inner executable and
+ * the X_OK bit is required (except for .exe, which wine runs). Windows: must be a .exe (no shell, so .bat/.cmd/.lnk
+ * cannot be launched) and bundle logic never applies.
  */
 function validateCorePath(p, core, { fs = nodeFs, platform = process.platform } = {}) {
-  const abs = validateAbsolutePath(p, 'Executable path');
+  const abs = validateAbsolutePath(p, 'Executable path', { platform });
   let st;
   try { st = fs.statSync(abs); } catch { throw new Error('That file does not exist'); }
   let exe = abs;
   if (st.isDirectory()) {
+    if (platform === 'win32') throw new Error('Choose an .exe file, not a folder');
     if (!/\.app$/i.test(abs)) throw new Error('Choose an executable file or a .app bundle');
     exe = resolveAppBundle(abs, core, { fs });
     try { st = fs.statSync(exe); } catch { throw new Error('The .app bundle executable is missing'); }
   }
   if (!st.isFile()) throw new Error('That path is not a file');
-  if (platform !== 'win32' && !/\.exe$/i.test(exe)) {
+  if (platform === 'win32') {
+    if (!/\.exe$/i.test(exe)) throw new Error('Choose an .exe file (shortcuts and .bat/.cmd scripts cannot be launched)');
+  } else if (!/\.exe$/i.test(exe)) {
     try { fs.accessSync(exe, nodeFs.constants.X_OK); } catch { throw new Error('That file is not executable'); }
   }
   return exe;
@@ -210,17 +222,18 @@ function createHandlers(ctx) {
     'library:get': () => store.getLibrary(),
 
     'library:addFolder': async (p) => {
-      const abs = validateFolderPath(p, { fs, homedir: ctx.homedir });
+      const abs = validateFolderPath(p, { fs, homedir: ctx.homedir, platform });
       const { folders } = store.getLibrary();
-      if (!folders.includes(abs)) store.setLibrary({ folders: [...folders, abs] });
+      // Windows paths are case-insensitive: "D:\Roms" and "d:\roms" are the same folder.
+      if (!folders.some((f) => pathKey(f, platform) === pathKey(abs, platform))) store.setLibrary({ folders: [...folders, abs] });
       return rescan();
     },
 
     'library:removeFolder': async (p) => {
       assertString(p, 'Folder path', { max: MAX_PATH_LEN });
-      const abs = nodePath.resolve(p);
+      const abs = pathFor(platform).resolve(p);
       const { folders } = store.getLibrary();
-      store.setLibrary({ folders: folders.filter((f) => f !== abs && f !== p) });
+      store.setLibrary({ folders: folders.filter((f) => pathKey(f, platform) !== pathKey(abs, platform) && f !== p) });
       return rescan();
     },
 
@@ -271,7 +284,7 @@ function createHandlers(ctx) {
       const { command, args, env } = core.buildArgs(game.path, buildOpts);
       // Create the prefix only after buildArgs accepted the request.
       if (buildOpts.prefixDir) fs.mkdirSync(buildOpts.prefixDir, { recursive: true, mode: 0o700 });
-      const session = await processes.start({ gameId: game.id, coreId: core.id, command, args, env });
+      const session = await processes.start({ gameId: game.id, coreId: core.id, command, args, env, windowsHide: core.windowsHide === true });
 
       const fresh = store.getLibrary();
       const g = fresh.games.find((x) => x.id === game.id);
@@ -306,6 +319,8 @@ function createHandlers(ctx) {
 }
 
 const stripUrlSuffix = (u) => u.split('#')[0].split('?')[0];
+/** Windows file systems are case-insensitive, so file:///C:/App/... and file:///c:/app/... name the same page. */
+const urlKey = (u, platform) => (platform === 'win32' && /^file:/i.test(u) ? u.toLowerCase() : u);
 
 /**
  * Register all handlers on an ipcMain-like object. Fails closed: only calls from the app's own
@@ -313,12 +328,13 @@ const stripUrlSuffix = (u) => u.split('#')[0].split('?')[0];
  */
 function registerIpc(ipcMain, ctx) {
   const handlers = createHandlers(ctx);
-  const allowed = stripUrlSuffix(typeof ctx.rendererUrl === 'string' ? ctx.rendererUrl : RENDERER_INDEX_URL);
+  const platform = ctx.platform || process.platform;
+  const allowed = urlKey(stripUrlSuffix(typeof ctx.rendererUrl === 'string' ? ctx.rendererUrl : RENDERER_INDEX_URL), platform);
   for (const [channel, fn] of Object.entries(handlers)) {
     ipcMain.handle(channel, (event, ...args) => {
       const frame = event && event.senderFrame;
       const url = frame && frame.url;
-      if (typeof url !== 'string' || url.length === 0 || stripUrlSuffix(url) !== allowed) {
+      if (typeof url !== 'string' || url.length === 0 || urlKey(stripUrlSuffix(url), platform) !== allowed) {
         throw new Error('Blocked IPC call from an untrusted page');
       }
       return fn(...args);
@@ -331,5 +347,5 @@ module.exports = {
   createHandlers, registerIpc,
   validateGameId, validateCoreId, validateSessionId, validatePickKind, validateAbsolutePath,
   validateFolderPath, validateLaunchOptions, RENDERER_INDEX_URL, validateExternalUrl, validateCorePath, resolveAppBundle,
-  assertString,
+  assertString, pathFor, pathKey,
 };

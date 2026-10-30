@@ -13,6 +13,7 @@
 // macOS bundle executable is "rpcs3" (rpcs3/rpcs3.plist.in CFBundleExecutable). Output goes to
 // <build>/bin (cores/rpcs3/CMakeLists.txt lines 131-133), i.e. bin/rpcs3/rpcs3.app on macOS.
 const nodePath = require('path');
+const { windowsInstallCandidates } = require('./winpaths');
 
 function pathFor(platform) { return platform === 'win32' ? nodePath.win32 : nodePath.posix; }
 
@@ -41,9 +42,8 @@ module.exports = {
         '/opt/homebrew/bin/rpcs3', '/usr/local/bin/rpcs3'
       );
     } else if (platform === 'win32') {
-      for (const base of [env.ProgramFiles, env['ProgramFiles(x86)'], env.LOCALAPPDATA && P.join(env.LOCALAPPDATA, 'Programs')]) {
-        if (base) out.push(P.join(base, 'RPCS3', 'rpcs3.exe'));
-      }
+      // RPCS3 ships as a portable archive (rpcs3.exe next to its config); no installer.
+      out.push(...windowsInstallCandidates({ env, homedir }, ['RPCS3', 'rpcs3'], 'rpcs3.exe'));
     } else {
       out.push('/usr/bin/rpcs3', '/usr/local/bin/rpcs3', '/opt/rpcs3/rpcs3');
       if (homedir) {

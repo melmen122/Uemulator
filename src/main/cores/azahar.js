@@ -5,6 +5,7 @@
 // on macOS it is an app bundle (azahar.app/Contents/MacOS/azahar), written to
 // <build>/bin/<config>/ (cores/azahar/CMakeLists.txt line 390).
 const nodePath = require('path');
+const { windowsInstallCandidates } = require('./winpaths');
 
 function pathFor(platform) { return platform === 'win32' ? nodePath.win32 : nodePath.posix; }
 
@@ -33,9 +34,7 @@ module.exports = {
         '/opt/homebrew/bin/azahar', '/usr/local/bin/azahar'
       );
     } else if (platform === 'win32') {
-      for (const base of [env.ProgramFiles, env['ProgramFiles(x86)'], env.LOCALAPPDATA && P.join(env.LOCALAPPDATA, 'Programs')]) {
-        if (base) out.push(P.join(base, 'Azahar', 'azahar.exe'));
-      }
+      out.push(...windowsInstallCandidates({ env, homedir }, ['Azahar', 'azahar'], 'azahar.exe'));
     } else {
       out.push('/usr/bin/azahar', '/usr/local/bin/azahar', '/opt/azahar/azahar');
     }
