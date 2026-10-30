@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Uemulator</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Primary">
+      <div class="titlebar" aria-hidden="true"></div>
+      <div class="brand" id="brand"><span class="brand-name">Uemulator</span></div>
+      <nav class="nav" id="nav" aria-label="Sections">
+        <button type="button" class="nav-item" data-view="library"><span class="nav-icon" data-icon="library"></span><span class="nav-label">Library</span></button>
+        <button type="button" class="nav-item" data-view="running"><span class="nav-icon" data-icon="running"></span><span class="nav-label">Running</span><span class="nav-badge" id="running-badge" hidden>0</span></button>
+        <button type="button" class="nav-item" data-view="cores"><span class="nav-icon" data-icon="cores"></span><span class="nav-label">Cores</span><span class="nav-dot" id="cores-dot" hidden title="Some emulators aren't ready"></span></button>
+        <button type="button" class="nav-item" data-view="settings"><span class="nav-icon" data-icon="settings"></span><span class="nav-label">Settings</span></button>
+      </nav>
+      <div class="sidebar-foot" id="sidebar-foot"></div>
+    </aside>
+    <main class="main" id="main">
+      <div class="main-drag" aria-hidden="true"></div>
+      <div id="banner" class="banner" role="alert" hidden></div>
+      <div id="views" class="views"></div>
+    </main>
+  </div>
+  <div id="toasts" class="toasts" role="status" aria-live="polite" aria-atomic="false"></div>
+  <noscript><p class="noscript">Uemulator needs JavaScript to run.</p></noscript>
+</body>
+</html>

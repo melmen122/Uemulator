@@ -1,0 +1,20 @@
+[submodule "cores/mgba"]
+	path = cores/mgba
+	url = https://github.com/mgba-emu/mgba.git
+	shallow = true
+[submodule "cores/pyboy"]
+	path = cores/pyboy
+	url = https://github.com/Baekalfen/PyBoy.git
+	shallow = true
+[submodule "cores/project64"]
+	path = cores/project64
+	url = https://github.com/project64/project64.git
+	shallow = true
+[submodule "cores/azahar"]
+	path = cores/azahar
+	url = https://github.com/azahar-emu/azahar.git
+	shallow = true
+[submodule "cores/ryujinx"]
+	path = cores/ryujinx
+	url = https://git.ryujinx.app/ryubing/ryujinx.git
+	shallow = true

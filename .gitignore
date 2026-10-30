@@ -1,0 +1,11 @@
+node_modules/
+bin/
+dist/
+out/
+*.log
+.DS_Store
+**/__pycache__/
+
+# tooling
+graphify-out/
+.claude/agent-memory/
