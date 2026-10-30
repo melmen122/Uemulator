@@ -18,3 +18,7 @@
 	path = cores/ryujinx
 	url = https://git.ryujinx.app/ryubing/ryujinx.git
 	shallow = true
+[submodule "cores/rpcs3"]
+	path = cores/rpcs3
+	url = https://github.com/rpcs3/rpcs3.git
+	shallow = true

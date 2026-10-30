@@ -22,7 +22,7 @@ Neutrals are tinted toward hue 275 (cool violet) so surfaces feel related to the
 | `--accent` | oklch(.8 .165 70) | same | fills. Text on it is always `--on-accent` (dark ink) |
 | `--accent-text` | oklch(.85 .14 72) | oklch(.46 .13 55) | accent used as text/link/selected chip |
 | `--ok` `--warn` `--danger` | green 155 / amber 82 / red 25 | darker equivalents | status, errors |
-| `--sys-n64` `-switch` `-3ds` `-gba` `-gbc` `-gb` | hues 150 / 25 / 240 / 295 / 345 / 105 | darker L | system badge text (tint is 15% of the same color) |
+| `--sys-n64` `-ps3` `-switch` `-3ds` `-gba` `-gbc` `-gb` | hues 150 / 195 / 25 / 240 / 295 / 345 / 105 | darker L | system badge text (tint is 15% of the same color) |
 | `--shadow-c` | black 45% | ink 16% | all shadows (always offset + blur) |
 
 Radius: `6 / 10 / 14 / pill`. Spacing (4px grid): `--s1…--s8` = 4, 8, 12, 16, 20, 24, 32, 48. Easing: `--ease` exponential ease-out; transitions 150–180 ms.
@@ -61,7 +61,7 @@ Numbers that change (counts, uptime) use `tabular-nums`. Headings use `text-wrap
   - Selected = accent-line border; keyboard focus = 2px accent ring.
 - **System badge (`.sys-badge .sys-<id>`):** 22px, label in system color on a 15% tint of itself. GBC and GB are separate badges; the GB/GBC tab combines them.
 - **Status pill:** labeled, dot + text, tint of semantic color (`is-ok / is-warn / is-danger / is-muted`).
-- **Core card:** name + system badges + status pill; labeled *Executable* path in a mono inset (or "Not found"), source line, `Set path…` / `Reset`, build-from-source command with copy button (shown unless ready), homepage link and license in the footer. Project64 on unsupported OS gets a Wine note.
+- **Core card:** name + system badges + status pill; labeled *Executable* path in a mono inset (or "Not found"), source line, `Set path…` / `Reset`, build-from-source command with copy button (shown unless ready), homepage link and license in the footer. Project64 on unsupported OS gets a Wine note; RPCS3 always shows a one-line PS3 firmware note.
 - **Session panel:** title, core · system · PID, uptime (mono, tabular), status pill, Stop (becomes Dismiss after exit). Log: monospace, ~240px, `role="log"` with `aria-live="off"` (screen readers read it on demand, not per line), capped at 500 DOM lines, autoscroll sticks to the bottom unless scrolled up, then a "Latest" button appears. `warn`/`error` lines are tinted. Exited sessions dim and are removed after 6 s (20 s if the exit code was non-zero).
 - **Switch / segmented control:** `role="switch"` and `role="radiogroup"` with roving tabindex and arrow keys. Used for fullscreen, GB core and theme.
 - **Toasts:** bottom-right stack (max 4) in an `aria-live="polite"` region. Kinds: info / success / error (error stays 9 s). Optional action button. Dismiss button on all.

@@ -9,8 +9,9 @@ const pyboy = require('./pyboy');
 const project64 = require('./project64');
 const azahar = require('./azahar');
 const ryujinx = require('./ryujinx');
+const rpcs3 = require('./rpcs3');
 
-const CORES = Object.freeze([mgba, pyboy, project64, azahar, ryujinx]);
+const CORES = Object.freeze([mgba, pyboy, project64, azahar, ryujinx, rpcs3]);
 const DEFAULT_BIN_DIR = nodePath.resolve(__dirname, '..', '..', '..', 'bin');
 
 function getCore(id) {

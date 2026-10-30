@@ -23,6 +23,8 @@ let games = EMPTY ? [] : [
   g('g02', 'The Legend of Zelda: Ocarina of Time', 'n64', 'z64', 32, N, { favorite: true, lastPlayed: now - 2 * 3600e3 }),
   g('g03', 'GoldenEye 007', 'n64', 'z64', 12, N),
   g('g04', 'Mario Kart 64', 'n64', 'n64', 12, N),
+  g('g21', 'Demon’s Souls', 'ps3', 'BIN', 27800, N, { path: "/Users/demo/ROMs/PS3/Demon's Souls/PS3_GAME/USRDIR/EBOOT.BIN", lastPlayed: now - 3600e3 }),
+  g('g22', 'Persona 5', 'ps3', 'iso', 22400, N, { lastPlayed: now - 9 * DAY }),
   g('g05', 'Hollow Knight', 'switch', 'nsp', 3100, N, { lastPlayed: now - 5 * DAY }),
   g('g06', 'Celeste', 'switch', 'nsp', 1200, N, { favorite: true }),
   g('g07', 'Metroid Dread', 'switch', 'xci', 3900, N),
@@ -45,6 +47,7 @@ let settings = { fullscreen: false, gbCore: 'mgba', corePaths: {}, theme: params
 
 const CORE_DEFS = [
   { id: 'project64', name: 'Project64', systems: ['n64'], homepage: 'https://www.pj64-emu.com', license: 'GPL-2.0', base: { status: 'unsupported', exe: null, source: null } },
+  { id: 'rpcs3', name: 'RPCS3', systems: ['ps3'], homepage: 'https://rpcs3.net', license: 'GPL-2.0', base: { status: 'missing', exe: null, source: null } },
   { id: 'ryujinx', name: 'Ryujinx', systems: ['switch'], homepage: 'https://ryujinx.app', license: 'MIT', base: { status: 'missing', exe: null, source: null } },
   { id: 'azahar', name: 'Azahar', systems: ['3ds'], homepage: 'https://azahar-emu.org', license: 'GPL-2.0', base: { status: 'ready', exe: '/Users/demo/Uemulator/bin/azahar/azahar', source: 'built' } },
   { id: 'pyboy', name: 'PyBoy', systems: ['gb', 'gbc'], homepage: 'https://github.com/Baekalfen/PyBoy', license: 'LGPL-3.0', base: { status: 'missing', exe: null, source: null } },
@@ -86,7 +89,7 @@ const library = () => clone({ folders: FOLDERS, games });
 
 function defaultCoreFor(game) {
   if (game.system === 'gb' || game.system === 'gbc') return settings.gbCore;
-  return { n64: 'project64', switch: 'ryujinx', '3ds': 'azahar', gba: 'mgba' }[game.system];
+  return { n64: 'project64', ps3: 'rpcs3', switch: 'ryujinx', '3ds': 'azahar', gba: 'mgba' }[game.system];
 }
 
 function extraGames(folder) {

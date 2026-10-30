@@ -98,7 +98,7 @@ test('defaultWhich searches PATH with injected exists', () => {
 });
 
 test('registry and describeCore shape', () => {
-  assert.deepEqual(listCores().map((c) => c.id).sort(), ['azahar', 'mgba', 'project64', 'pyboy', 'ryujinx']);
+  assert.deepEqual(listCores().map((c) => c.id).sort(), ['azahar', 'mgba', 'project64', 'pyboy', 'rpcs3', 'ryujinx']);
   assert.equal(getCore('nope'), null);
   const d = describeCore(mgba, {}, mkDeps([]));
   assert.deepEqual(Object.keys(d).sort(), ['exe', 'homepage', 'id', 'license', 'name', 'source', 'status', 'systems']);

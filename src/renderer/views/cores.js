@@ -50,6 +50,8 @@ export function createCoresView() {
         core.exe && core.source ? h('dd', { class: 'path-source' }, sourceLabel(core.source)) : null),
       core.id === 'project64' && core.status === 'unsupported'
         ? h('p', { class: 'core-note' }, 'Project64 is Windows-only. On macOS and Linux it can run through Wine: install Wine, then set the path to a Project64.exe.') : null,
+      core.id === 'rpcs3'
+        ? h('p', { class: 'core-note' }, 'RPCS3 needs PS3 firmware (PS3UPDAT.PUP) installed inside RPCS3 itself before games will boot.') : null,
       h('div', { class: 'core-actions' },
         h('button', { type: 'button', class: 'btn btn-primary btn-sm', onClick: () => pickCorePath(core.id) }, icon('folder', 15), 'Set path…'),
         h('button', { type: 'button', class: 'btn btn-sm', 'aria-disabled': overridden ? null : 'true', title: overridden ? 'Go back to automatic detection' : 'Already using automatic detection',

@@ -2,7 +2,7 @@
 // Build emulator cores from the git submodules in cores/ into bin/<id>/.
 //   node scripts/build-cores.mjs [--check] [--jobs N] [coreId...]      (default: all cores)
 // Nothing under cores/ is edited by hand; out-of-tree build dirs live in bin/.build/ (gitignored).
-// Exception: azahar/project64 need their nested submodules initialised inside cores/<id>.
+// Exception: azahar/project64/rpcs3 need their nested submodules initialised inside cores/<id>.
 // All processes are started with spawnSync(cmd, [args]) and no shell.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -15,7 +15,7 @@ const CORES_DIR = path.join(ROOT, 'cores');
 const BIN_DIR = path.join(ROOT, 'bin');
 const BUILD_DIR = path.join(BIN_DIR, '.build');
 const PLATFORM = process.platform; // darwin | linux | win32
-const ALL_CORES = ['mgba', 'pyboy', 'project64', 'azahar', 'ryujinx'];
+const ALL_CORES = ['mgba', 'pyboy', 'project64', 'azahar', 'ryujinx', 'rpcs3'];
 
 const USAGE = `Usage: node scripts/build-cores.mjs [options] [coreId...]
 
@@ -68,6 +68,14 @@ const HINTS = {
     linux: 'sudo apt install build-essential cmake ninja-build qt6-base-dev qt6-multimedia-dev libsdl2-dev libssl-dev libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev libgl-dev libxext-dev',
     win32: 'Install Qt 6 and Visual Studio Build Tools; see cores/azahar/README.md and the Azahar wiki',
   },
+  // RPCS3 (cores/rpcs3/BUILDING.md): CMake 3.28+, Clang 19+/GCC 13+, Qt >= 6.7 (3rdparty/qt6.cmake) with
+  // Multimedia/Svg, SDL3, Vulkan, and LLVM (system LLVM on macOS/Linux; built from the submodule on Windows).
+  rpcs3Libs: {
+    darwin: 'brew install cmake ninja qt sdl3 llvm molten-vk vulkan-headers vulkan-loader   (RPCS3 only officially supports Windows/Linux builds; macOS is best-effort. Or install the prebuilt app from https://rpcs3.net and use Settings.)',
+    linux: 'sudo apt install build-essential ninja-build cmake llvm-dev libasound2-dev libpulse-dev libopenal-dev libglew-dev zlib1g-dev libedit-dev libvulkan-dev libudev-dev libevdev-dev libsdl3-dev libjack-dev libsndio-dev libcurl4-openssl-dev qt6-base-dev qt6-base-private-dev qt6-multimedia-dev qt6-svg-dev libxkbcommon-dev   (needs GCC 13+/Clang 19+, Qt >= 6.7, SDL3; see cores/rpcs3/BUILDING.md)',
+    win32: 'Install Visual Studio 2022 (Desktop development with C++), CMake 3.28+, Python 3, Qt 6 (set Qt6_ROOT, e.g. C:\\Qt\\6.x\\msvc2022_64) and the Vulkan SDK (sets VULKAN_SDK); see cores/rpcs3/BUILDING.md',
+  },
+  ninja: { darwin: 'brew install ninja', linux: 'sudo apt install ninja-build', win32: 'winget install Ninja-build.Ninja   (optional on Windows)' },
 };
 const hint = (key) => HINTS[key][PLATFORM] ?? HINTS[key].linux;
 
@@ -117,6 +125,27 @@ function findMsbuild() {
 function hasCCompiler() {
   if (PLATFORM === 'win32') return !!findMsbuild();
   return ['cc', 'clang', 'gcc'].some((c) => exists(c));
+}
+
+/** True when a Qt 6 install can be located (env hints, Homebrew, or qmake6/qtpaths6 on PATH). */
+function hasQt6() {
+  if (process.env.Qt6_ROOT || process.env.Qt6_DIR || process.env.QTDIR) return true;
+  if (PLATFORM === 'darwin' && capture('brew', ['--prefix', '--installed', 'qt'])) return true;
+  return exists('qmake6') || exists('qtpaths6') || exists('qmake', ['-v']);
+}
+
+/** True when LLVM can be located for a system-LLVM build (macOS/Linux). */
+function hasSystemLlvm() {
+  if (process.env.LLVM_DIR) return true;
+  if (PLATFORM === 'darwin' && capture('brew', ['--prefix', '--installed', 'llvm'])) return true;
+  return ['llvm-config', 'llvm-config-19', 'llvm-config-20', 'llvm-config-21', 'llvm-config-22'].some((c) => exists(c));
+}
+
+/** Submodule paths declared in cores/<id>/.gitmodules (relative to the core), or [] on error. */
+function nestedSubmodulePaths(id) {
+  const out = capture('git', ['-C', path.join(CORES_DIR, id), 'config', '-f', '.gitmodules', '--get-regexp', '^submodule\\..*\\.path$']);
+  if (!out) return [];
+  return out.split(/\r?\n/).map((l) => l.trim().split(/\s+/)[1]).filter(Boolean);
 }
 
 function submoduleReady(id) {
@@ -256,6 +285,78 @@ const CORES = {
       if (!run('dotnet', args)) return { ok: false, note: 'dotnet publish failed' };
       const found = path.join(out, `Ryujinx${exeSuffix}`);
       return fs.existsSync(found) ? { ok: true, note: path.relative(ROOT, found) } : { ok: false, note: 'published, but Ryujinx executable not found' };
+    },
+  },
+
+  rpcs3: {
+    platforms: ['darwin', 'linux', 'win32'],
+    check() {
+      const missing = [];
+      if (!exists('git')) missing.push({ tool: 'git', hint: hint('git') });
+      if (!exists('cmake')) missing.push({ tool: 'cmake >= 3.28 (+ Qt 6.7+, SDL3, Vulkan, LLVM)', hint: hint('rpcs3Libs') });
+      if (PLATFORM !== 'win32' && !exists('ninja')) missing.push({ tool: 'ninja', hint: hint('ninja') });
+      if (!hasQt6()) missing.push({ tool: 'Qt 6.7+ (Widgets, Multimedia, Svg)', hint: hint('rpcs3Libs') });
+      if (PLATFORM === 'win32') {
+        if (!findMsbuild()) missing.push({ tool: 'Visual Studio 2022 (C++ workload)', hint: hint('compiler') });
+        if (!process.env.VULKAN_SDK) missing.push({ tool: 'Vulkan SDK (VULKAN_SDK env var)', hint: hint('rpcs3Libs') });
+      } else {
+        if (!hasCCompiler()) missing.push({ tool: 'C/C++ compiler (Clang 19+ or GCC 13+)', hint: hint('compiler') });
+        if (!hasSystemLlvm()) missing.push({ tool: 'LLVM (llvm-config / LLVM_DIR)', hint: hint('rpcs3Libs') });
+      }
+      return missing;
+    },
+    build({ jobs }) {
+      const src = path.join(CORES_DIR, 'rpcs3');
+      const build = path.join(BUILD_DIR, 'rpcs3');
+      const out = path.join(BIN_DIR, 'rpcs3');
+      // Nested submodules are only fetched when RPCS3 is actually built (plan.md §1). The LLVM
+      // submodule (llvm-project, huge) is only needed on Windows (BUILD_LLVM=ON, as in CMakePresets.json
+      // preset "msvc"); macOS/Linux use system LLVM. SDL3/curl/zlib/gamemode come from the system.
+      const skip = PLATFORM === 'win32' ? [] : ['3rdparty/llvm/', '3rdparty/libsdl-org/', '3rdparty/curl/', '3rdparty/zlib/', '3rdparty/feralinteractive/'];
+      const wanted = nestedSubmodulePaths('rpcs3').filter((p) => !skip.some((s) => p.startsWith(s)));
+      const subArgs = ['-C', src, 'submodule', 'update', '--init', '--recursive', '--depth', '1'];
+      if (!run('git', wanted.length > 0 ? [...subArgs, '--', ...wanted] : subArgs)) {
+        return { ok: false, note: 'could not fetch nested submodules' };
+      }
+      fs.mkdirSync(build, { recursive: true });
+      // Out-of-tree build; the preset binaryDirs (build-msvc, ...) would write inside cores/rpcs3, so
+      // the preset's cache variables are passed explicitly instead.
+      const cfg = ['-S', src, '-B', build];
+      if (PLATFORM === 'win32') {
+        cfg.push('-G', 'Visual Studio 17 2022', '-A', 'x64', '-DCMAKE_CONFIGURATION_TYPES=Debug;Release',
+          '-DBUILD_LLVM=ON', '-DSTATIC_LINK_LLVM=ON', '-DUSE_FAUDIO=OFF', '-DUSE_SYSTEM_CURL=OFF',
+          '-DUSE_SYSTEM_ZLIB=OFF', '-DUSE_SYSTEM_OPENAL=OFF', '-DUSE_PRECOMPILED_HEADERS=ON');
+        if (process.env.Qt6_ROOT) cfg.push(`-DCMAKE_PREFIX_PATH=${process.env.Qt6_ROOT}`);
+      } else {
+        cfg.push('-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release', '-DBUILD_LLVM=OFF', '-DUSE_SYSTEM_SDL=ON',
+          '-DUSE_SYSTEM_ZLIB=ON', '-DUSE_SYSTEM_CURL=ON', '-DUSE_GAMEMODE=OFF');
+        // Portable codegen on Apple/ARM builds (BUILDING.md: NEON errors with -march=native; .ci/build-mac.sh).
+        if (PLATFORM === 'darwin' || process.arch === 'arm64') cfg.push('-DUSE_NATIVE_INSTRUCTIONS=OFF');
+        if (PLATFORM === 'darwin') {
+          cfg.push('-DUSE_SYSTEM_MVK=ON'); // as .ci/build-mac.sh; needs MoltenVK (brew molten-vk)
+          const prefixes = ['qt', 'sdl3', 'llvm', 'molten-vk', 'vulkan-headers', 'vulkan-loader']
+            .map((f) => capture('brew', ['--prefix', '--installed', f])).filter(Boolean);
+          const llvm = capture('brew', ['--prefix', '--installed', 'llvm']);
+          if (llvm && !process.env.LLVM_DIR) cfg.push(`-DLLVM_DIR=${path.join(llvm, 'lib', 'cmake', 'llvm')}`);
+          if (prefixes.length > 0) cfg.push(`-DCMAKE_PREFIX_PATH=${prefixes.join(';')}`);
+        }
+      }
+      if (!run('cmake', cfg)) return { ok: false, note: `configure failed. Needed libraries: ${hint('rpcs3Libs')}` };
+      if (!run('cmake', ['--build', build, '--config', 'Release', '--target', 'rpcs3', '--parallel', String(jobs)])) {
+        return { ok: false, note: 'build failed' };
+      }
+      // CMAKE_RUNTIME_OUTPUT_DIRECTORY_<CONFIG> is <build>/bin (cores/rpcs3/CMakeLists.txt); the
+      // post-build step copies Icons/GuiConfigs and runs macdeployqt/windeployqt there.
+      const produced = path.join(build, 'bin');
+      if (!fs.existsSync(produced)) return { ok: false, note: `expected output ${path.relative(ROOT, produced)} not found` };
+      cleanDir(out);
+      copyTree(produced, out);
+      // findFirst never descends into .app bundles, so the macOS executable is probed directly.
+      const macExe = path.join(out, 'rpcs3.app', 'Contents', 'MacOS', 'rpcs3');
+      const found = PLATFORM === 'darwin'
+        ? (fs.existsSync(macExe) ? macExe : null)
+        : findFirst(out, (e) => !e.isDirectory() && e.name === `rpcs3${exeSuffix}`);
+      return found ? { ok: true, note: path.relative(ROOT, found) } : { ok: false, note: 'built, but no rpcs3 executable found in output' };
     },
   },
 

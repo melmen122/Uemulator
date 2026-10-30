@@ -15,7 +15,7 @@ test('defaults on first load match plan shape', () => {
   assert.equal(s.fullscreen, false);
   assert.equal(s.gbCore, 'mgba');
   assert.equal(s.theme, 'system');
-  assert.deepEqual(Object.keys(s.corePaths).sort(), ['azahar', 'mgba', 'project64', 'pyboy', 'ryujinx']);
+  assert.deepEqual(Object.keys(s.corePaths).sort(), ['azahar', 'mgba', 'project64', 'pyboy', 'rpcs3', 'ryujinx']);
   assert.ok(Object.values(s.corePaths).every((v) => v === null));
   assert.deepEqual(createStore({ dir }).getLibrary(), { folders: [], games: [] });
 });

@@ -12,6 +12,9 @@ const SYSTEMS = Object.freeze([
   { id: 'gba', name: 'Game Boy Advance', extensions: ['.gba'], coreId: 'mgba', altCores: [] },
   { id: 'gbc', name: 'Game Boy Color', extensions: ['.gbc'], coreId: 'mgba', altCores: ['pyboy'] },
   { id: 'gb', name: 'Game Boy', extensions: ['.gb'], coreId: 'mgba', altCores: ['pyboy'] },
+  // PS3: disc images (.iso) plus EBOOT.BIN, which is matched by file NAME (see isPs3Eboot) because
+  // ".bin" is far too generic to claim as an extension. .pkg is an installer, so it is not listed.
+  { id: 'ps3', name: 'PlayStation 3', extensions: ['.iso'], coreId: 'rpcs3', altCores: [] },
 ].map((s) => Object.freeze(s)));
 
 const GB_CORES = Object.freeze(['mgba', 'pyboy']);
@@ -26,9 +29,30 @@ function getSystem(systemId) {
   return SYSTEMS.find((s) => s.id === systemId) || null;
 }
 
-/** @returns {string|null} system id for a file path (case-insensitive extension), or null. */
+/** File name (case-insensitive) that boots a PS3 game folder: <Game>/PS3_GAME/USRDIR/EBOOT.BIN or <TITLEID>/USRDIR/EBOOT.BIN. */
+const PS3_EBOOT_NAME = 'eboot.bin';
+
+/** Last path component, accepting both slash and backslash separators regardless of host OS. */
+function lastComponent(p) {
+  return p.slice(Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) + 1);
+}
+
+/** True when the path's file name is EBOOT.BIN (any case). */
+function isPs3Eboot(filePath) {
+  return typeof filePath === 'string' && lastComponent(filePath).toLowerCase() === PS3_EBOOT_NAME;
+}
+
+/** True for an EBOOT.BIN that sits directly inside a folder named USRDIR (any case). Used by the library scanner. */
+function isUsrdirEboot(filePath) {
+  if (!isPs3Eboot(filePath)) return false;
+  const parts = filePath.split(/[\\/]/);
+  return parts.length >= 2 && parts[parts.length - 2].toLowerCase() === 'usrdir';
+}
+
+/** @returns {string|null} system id for a file path (case-insensitive extension; EBOOT.BIN by name), or null. */
 function detectSystem(filePath) {
   if (typeof filePath !== 'string' || filePath.length === 0) return null;
+  if (isPs3Eboot(filePath)) return 'ps3';
   const ext = path.extname(filePath).toLowerCase();
   return byExtension.get(ext) || null;
 }
@@ -52,4 +76,4 @@ function coresForSystem(systemId) {
   return sys ? [sys.coreId, ...sys.altCores] : [];
 }
 
-module.exports = { SYSTEMS, EXTENSIONS, GB_CORES, getSystem, detectSystem, coreForSystem, coresForSystem };
+module.exports = { SYSTEMS, EXTENSIONS, GB_CORES, PS3_EBOOT_NAME, getSystem, detectSystem, isPs3Eboot, isUsrdirEboot, coreForSystem, coresForSystem };

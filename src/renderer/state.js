@@ -3,6 +3,7 @@ import { toast, readableError, toMs, basename } from './ui.js';
 
 export const SYSTEMS = {
   n64: { id: 'n64', name: 'Nintendo 64', short: 'N64' },
+  ps3: { id: 'ps3', name: 'PlayStation 3', short: 'PS3' },
   switch: { id: 'switch', name: 'Nintendo Switch', short: 'Switch' },
   '3ds': { id: '3ds', name: 'Nintendo 3DS', short: '3DS' },
   gba: { id: 'gba', name: 'Game Boy Advance', short: 'GBA' },
@@ -13,13 +14,14 @@ export const SYSTEMS = {
 export const TABS = [
   { id: 'all', label: 'All', title: 'All games', systems: null },
   { id: 'n64', label: 'N64', title: 'Nintendo 64', systems: ['n64'] },
+  { id: 'ps3', label: 'PS3', title: 'PlayStation 3', systems: ['ps3'] },
   { id: 'switch', label: 'Switch', title: 'Nintendo Switch', systems: ['switch'] },
   { id: '3ds', label: '3DS', title: 'Nintendo 3DS', systems: ['3ds'] },
   { id: 'gba', label: 'GBA', title: 'Game Boy Advance', systems: ['gba'] },
   { id: 'gb', label: 'GB/GBC', title: 'Game Boy / Color', systems: ['gb', 'gbc'] },
 ];
 
-const DEFAULT_CORE = { n64: 'project64', switch: 'ryujinx', '3ds': 'azahar', gba: 'mgba' };
+const DEFAULT_CORE = { n64: 'project64', ps3: 'rpcs3', switch: 'ryujinx', '3ds': 'azahar', gba: 'mgba' };
 
 export const state = {
   view: 'library',

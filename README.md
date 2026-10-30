@@ -1,6 +1,6 @@
 # Uemulator
 
-A desktop launcher (Node + Electron) that puts five emulators behind one game library. You add ROM
+A desktop launcher (Node + Electron) that puts six emulators behind one game library. You add ROM
 folders, Uemulator detects each game's system, and Play starts the matching emulator as a child
 process with live logs and a Stop button. Each emulator is an unmodified git submodule under
 `cores/<id>`; Uemulator only finds and launches them.
@@ -15,9 +15,21 @@ process with live logs and a Stop button. Each emulator is an unmodified git sub
 | Game Boy Advance | `.gba` | mGBA | https://github.com/mgba-emu/mgba | MPL-2.0 |
 | Game Boy | `.gb` | mGBA (default) or PyBoy | https://github.com/mgba-emu/mgba, https://github.com/Baekalfen/PyBoy | MPL-2.0, LGPL-3.0 |
 | Game Boy Color | `.gbc` | mGBA (default) or PyBoy | https://github.com/mgba-emu/mgba, https://github.com/Baekalfen/PyBoy | MPL-2.0, LGPL-3.0 |
+| PlayStation 3 | `.iso`, `EBOOT.BIN` (inside `USRDIR`) | RPCS3 | https://github.com/rpcs3/rpcs3 | GPL-2.0 |
 
 Ryujinx moved off GitHub. Use the `git.ryujinx.app` URL above; the GitHub Ryubing org has no
 emulator repository. The GB/GBC core is chosen in Settings. Extension matching is case-insensitive.
+
+### PlayStation 3 library rules
+
+- A PS3 game is a `.iso` file, or an `EBOOT.BIN` directly inside a `USRDIR` folder. Disc dumps look
+  like `<Game>/PS3_GAME/USRDIR/EBOOT.BIN`. Installed or PSN titles look like `<TITLEID>/USRDIR/EBOOT.BIN`.
+- `.pkg` installers are not supported.
+- The scanner does not descend into subfolders of `USRDIR`. Other `EBOOT.BIN` files are ignored.
+- The title comes from `TITLE` in the sibling `PARAM.SFO` when it can be read. Otherwise it uses the
+  game folder name.
+- RPCS3 needs PS3 firmware (`PS3UPDAT.PUP`) installed inside RPCS3 before games boot. Uemulator does
+  not install firmware.
 
 Upstream links come from `.gitmodules`. Each core keeps its own license; see `cores/<id>/` for the
 full text.
@@ -43,7 +55,7 @@ For each core, Uemulator uses the first match:
 2. **Built binary** in `bin/<id>/`, produced by `npm run build:cores`.
 3. **System install** locations, for example `/Applications/mGBA.app`, `/opt/homebrew/bin`,
    `/usr/bin`, or `%ProgramFiles%` on Windows.
-4. **PATH** lookup by name, for example `mgba-qt`, `mgba`, `pyboy`, `azahar`, `Ryujinx`.
+4. **PATH** lookup by name, for example `mgba-qt`, `mgba`, `pyboy`, `azahar`, `Ryujinx`, `rpcs3`.
 
 Project64 is Windows-only. On macOS and Linux it runs through `wine`, but only when `wine` is on
 PATH and a `Project64.exe` is set as the override.
@@ -66,6 +78,7 @@ skip that core. Real build failures exit with code 1.
 | `azahar` | `bin/azahar/` | `git`, `cmake`. Qt 6, SDL2 and a C++20 compiler are needed (the script only checks `cmake`). |
 | `ryujinx` | `bin/ryujinx/` | .NET SDK 10 or newer. The version comes from `cores/ryujinx/global.json`. |
 | `project64` | `bin/project64/` | Windows only: `git`, MSBuild (Visual Studio 2019 or newer). |
+| `rpcs3` | `bin/rpcs3/` | `git`, `cmake` 3.28+, Qt 6.7+ (Widgets, Multimedia, Svg), SDL3, Vulkan, LLVM (system LLVM on macOS/Linux; built from the submodule on Windows), Clang 19+ or GCC 13+. Windows needs Visual Studio 2022 and the Vulkan SDK (`VULKAN_SDK`). `ninja` is needed on macOS and Linux. Upstream officially supports Windows and Linux. The macOS path is best-effort and has not been run here. |
 
 The script prints the install command for each missing tool (for example `brew install cmake qt
 sdl2` on macOS). Build directories live in `bin/.build/`, and nothing under `cores/` is edited.
@@ -98,7 +111,7 @@ the button on the Running panel.
 ## Development
 
 ```sh
-npm test          # node --test "tests/**/*.test.js" (89 unit tests)
+npm test          # node --test "tests/**/*.test.js" (134 unit tests)
 npm start         # run the app
 npm run dist      # electron-builder packaging
 ```
@@ -139,7 +152,7 @@ plan.md          architecture and contracts
 - No embedded play. Games run in the emulator's own window, outside Uemulator.
 - Cores are launched as external windows. Uemulator tracks the process and its logs only.
 - No prebuilt core installer. Cores must be built locally or installed by hand.
-- Build paths for cmake and .NET are untested on the development machine. None of the five
+- Build paths for cmake, .NET and RPCS3 are untested on the development machine. None of the six
   emulators is installed there, so real-emulator launches are untested.
 - Licenses: each core keeps its own license (see table above). Uemulator is a launcher that starts
   those programs as separate processes. Check each core's license before you redistribute builds.

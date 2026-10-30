@@ -168,7 +168,7 @@ export function createLibraryView() {
         title: hasFolders ? 'No games found in your folders' : 'Add your ROM folder to get started',
         body: hasFolders
           ? `Uemulator looked through ${state.folders.length} ${state.folders.length === 1 ? 'folder' : 'folders'} and didn't find a supported ROM. Check the folder, or add another.`
-          : 'Point Uemulator at a folder of ROMs. It detects N64, Switch, 3DS, GBA, GBC and GB games by file type and builds your library.',
+          : 'Point Uemulator at a folder of ROMs. It detects N64, PS3, Switch, 3DS, GBA, GBC and GB games by file type and builds your library.',
         actions: [
           h('button', { type: 'button', class: 'btn btn-primary btn-lg', 'aria-disabled': state.bridgeMissing ? 'true' : null, onClick: addFolderFlow }, icon('folder', 18), 'Add ROM folder'),
           hasFolders ? h('button', { type: 'button', class: 'btn btn-lg', onClick: rescanFlow }, icon('refresh', 18), 'Rescan') : null,

@@ -32,6 +32,7 @@
 
   /* per-system hues (badge text + tint) */
   --sys-n64:    light-dark(oklch(0.46 0.13 150), oklch(0.8 0.15 150));
+  --sys-ps3:    light-dark(oklch(0.46 0.1 195),  oklch(0.8 0.11 195));
   --sys-switch: light-dark(oklch(0.5 0.19 27),   oklch(0.78 0.16 25));
   --sys-3ds:    light-dark(oklch(0.48 0.15 240), oklch(0.8 0.12 235));
   --sys-gba:    light-dark(oklch(0.48 0.17 295), oklch(0.8 0.13 295));
@@ -232,7 +233,7 @@ input { caret-color: var(--accent); }
 
 .badge { display: inline-flex; align-items: center; height: 22px; padding: 0 var(--s2); border-radius: var(--r-sm); font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.02em; }
 .sys-badge { color: var(--c, var(--text-2)); background: color-mix(in oklch, var(--c, var(--text-2)) 15%, transparent); }
-.sys-n64 { --c: var(--sys-n64); } .sys-switch { --c: var(--sys-switch); } .sys-3ds { --c: var(--sys-3ds); }
+.sys-n64 { --c: var(--sys-n64); } .sys-ps3 { --c: var(--sys-ps3); } .sys-switch { --c: var(--sys-switch); } .sys-3ds { --c: var(--sys-3ds); }
 .sys-gba { --c: var(--sys-gba); } .sys-gbc { --c: var(--sys-gbc); } .sys-gb { --c: var(--sys-gb); }
 
 .status-pill { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 var(--s3); border-radius: var(--r-pill); font-size: var(--fs-xs); font-weight: 700; white-space: nowrap; --c: var(--text-2); color: var(--c); background: color-mix(in oklch, var(--c) 14%, transparent); }

@@ -1,6 +1,6 @@
 # Uemulator — Plan
 
-One local desktop app (Node + Electron) that unifies five open-source emulators behind a single
+One local desktop app (Node + Electron) that unifies six open-source emulators behind a single
 game library, launcher and settings UI.
 
 | System | Core | Upstream | Language / build | License |
@@ -10,10 +10,11 @@ game library, launcher and settings UI.
 | Nintendo 3DS | Azahar | github.com/azahar-emu/azahar | C++ / CMake + Qt6 | GPL-2.0 |
 | Game Boy / Color | PyBoy | github.com/Baekalfen/PyBoy | Python (+Cython) / pip | LGPL-3.0 |
 | GBA / GB / GBC | mGBA | github.com/mgba-emu/mgba | C / CMake | MPL-2.0 |
+| PlayStation 3 | RPCS3 | github.com/rpcs3/rpcs3 | C++ / CMake + Ninja, Qt 6.7+ | GPL-2.0 |
 
 ## 1. Key decision: shell + process adapters, not a merged codebase
 
-The five emulators use four languages and four build systems, and three of them have their own GUI
+The six emulators use four languages and four build systems, and three of them have their own GUI
 toolkits. Merging their source into one binary isn't realistic and would break their licenses'
 separation. So the plan is:
 
@@ -32,7 +33,7 @@ separation. So the plan is:
   3. well-known system install locations (e.g. `/Applications/mGBA.app`, Homebrew, `PATH`)
 - **Platform reality**: Project64 is Windows-only. On macOS/Linux its adapter uses `wine` when it's on
   PATH and a `Project64.exe` is configured; otherwise the core shows "Unsupported on this OS". The
-  other four are cross-platform.
+  other five are cross-platform.
 
 ### Phase 2 (not in v1)
 - Embedded play: PyBoy runs headless in a Python bridge that streams frames into a `<canvas>`. mGBA
@@ -50,7 +51,7 @@ Uemulator/
   package.json                electron, electron-builder; scripts: start, test, build:cores, dist
   .gitmodules                 cores/* (shallow)
   cores/                      upstream submodules (never edited)
-    mgba/ pyboy/ project64/ azahar/ ryujinx/
+    mgba/ pyboy/ project64/ azahar/ ryujinx/ rpcs3/
   bin/                        build output per core (gitignored)
   scripts/
     build-cores.mjs           `node scripts/build-cores.mjs [coreId...]` (per-core build + toolchain checks)
@@ -64,7 +65,7 @@ Uemulator/
       processes.js            running-game registry (spawn, log ring buffer, stop)
       cores/
         index.js              registry: list adapters, resolve, status
-        mgba.js pyboy.js project64.js azahar.js ryujinx.js
+        mgba.js pyboy.js project64.js azahar.js ryujinx.js rpcs3.js
     preload/
       preload.js              contextBridge → window.uemu (typed, minimal API)
     renderer/
@@ -84,9 +85,15 @@ Uemulator/
 | `gba` | Game Boy Advance | .gba | mgba |
 | `gbc` | Game Boy Color | .gbc | mgba (alt: pyboy) |
 | `gb` | Game Boy | .gb | mgba (alt: pyboy) |
+| `ps3` | PlayStation 3 | .iso, EBOOT.BIN (only inside a `USRDIR` folder; matched by file name) | rpcs3 |
 
 The user can choose which core handles GB/GBC (`mgba` or `pyboy`) in Settings. Matching is
 case-insensitive on the file extension.
+
+PS3 games are `.iso` files or `EBOOT.BIN` files directly inside a `USRDIR` folder (disc dumps:
+`<Game>/PS3_GAME/USRDIR/EBOOT.BIN`; installed or PSN: `<TITLEID>/USRDIR/EBOOT.BIN`). `.pkg` is not
+supported. The scanner does not descend into subfolders of `USRDIR`. The title is taken from the
+sibling `PARAM.SFO` when readable, otherwise from the game folder name.
 
 ### 3.2 Adapter interface (`src/main/cores/<id>.js`)
 ```js
@@ -101,6 +108,10 @@ module.exports = {
 `cores/index.js` adds the shared logic: `resolveExecutable(core, settings)` checks the override, then
 the candidates, then `which`, and returns `{ status: 'ready'|'missing'|'unsupported', exe, source }`.
 `buildArgs` must be pure so it can be unit tested.
+
+The RPCS3 adapter always passes `--no-gui`, so the game boots without the main window and RPCS3
+quits when the game closes. `--fullscreen` is added after it only when the setting is on. The
+path is always last.
 
 ### 3.3 IPC (`window.uemu`, all return Promises)
 | Method | Channel | Returns |
@@ -139,6 +150,7 @@ Settings shape: `{ fullscreen:false, gbCore:'mgba', corePaths:{ [coreId]: string
 | ryujinx | `dotnet publish cores/ryujinx/src/Ryujinx/Ryujinx.csproj -c Release -r <host RID> --self-contained true -o bin/ryujinx`. Executable `Ryujinx` (`Ryujinx.app/Contents/MacOS/Ryujinx` only for a system .app install). | .NET SDK 10.0.301 (`global.json`, `rollForward: latestFeature`) |
 | pyboy | Built from a copy in `bin/.build/pyboy-src` so pip never writes into `cores/`: `python3 -m venv bin/pyboy/venv` → `pip install <copy>` (deps: numpy, pysdl2, pysdl2-dll) | python3 ≥ 3.9, a C compiler (Cython) |
 | project64 | Windows only: `git -C cores/project64 submodule update --init --recursive --depth 1` (GLideN64, SDL), then `msbuild Project64.sln /m /p:Configuration=Release /p:Platform=x64` → `cores/project64/Bin/x64/Release` copied to `bin/project64` | Visual Studio 2019+ (MSBuild) |
+| rpcs3 | Nested submodules fetched selectively: `git -C cores/rpcs3 submodule update --init --recursive --depth 1`, skipping LLVM, SDL, curl, zlib and feralinteractive on macOS/Linux (Windows fetches all). Then out-of-tree `cmake -S cores/rpcs3 -B bin/.build/rpcs3 -G Ninja` (macOS/Linux, system LLVM, system SDL3) or `-G "Visual Studio 17 2022" -A x64` with `BUILD_LLVM=ON` (Windows) → `cmake --build --target rpcs3` → `<build>/bin` copied to `bin/rpcs3`. Executable: `bin/rpcs3/rpcs3.app/Contents/MacOS/rpcs3` on macOS, `rpcs3` on Linux, `rpcs3.exe` on Windows. Upstream officially supports Windows and Linux; macOS is best-effort and untested here. | CMake 3.28+, Ninja (macOS/Linux), Qt 6.7+, SDL3, Vulkan, LLVM, Clang 19+ / GCC 13+. Windows: VS 2022 and the Vulkan SDK. |
 
 The script checks for each toolchain first. When one is missing it prints the exact install command
 (e.g. `brew install cmake qt sdl2`, `brew install --cask dotnet-sdk`) and skips that core, so one
@@ -146,12 +158,13 @@ missing toolchain never fails the others.
 
 ## 5. UI (renderer)
 - **Library** (default view): a grid of game cards, filtered by system tabs (All · N64 · Switch ·
-  3DS · GBA · GB/GBC), with search, favorites and recently played. It shows an empty state with
+  3DS · GBA · GB/GBC · PS3), with search, favorites and recently played. It shows an empty state with
   "Add ROM folder" when there are no games.
 - **Game card**: title, system badge and Play. Play is disabled with a reason when the core is
   missing. Double-click also launches.
 - **Cores** view: one card per emulator showing status (Ready / Not installed / Unsupported), the
   resolved path and its source, plus "Set path…", "Reset" and links to the homepage and license.
+  The RPCS3 card also notes that PS3 firmware must be installed inside RPCS3.
 - **Running** panel: active sessions with a live log tail and Stop.
 - **Settings**: ROM folders, fullscreen on launch, GB/GBC core choice and theme.
 - Keyboard: `/` focuses search, Enter launches the selected game, and arrow keys move the grid
@@ -178,6 +191,8 @@ missing toolchain never fails the others.
 - `node scripts/build-cores.mjs mgba` (etc.) either builds or prints actionable missing-toolchain steps.
 
 ## 8. Status
-- v1 implemented: Electron shell, game library, five core adapters, build script, 89 unit tests.
+- v1 implemented: Electron shell, game library, six core adapters, build script, 134 unit tests.
+- PS3 / RPCS3 added: system table entry, EBOOT.BIN/USRDIR scanning, adapter, build script entry,
+  PS3 UI filter and badge. The RPCS3 build has not been run on the dev machine.
 - Not yet done: embedded play (phase 2), prebuilt core installer, real-emulator launch tests (none of
-  the emulators is installed on the dev machine).
+  the six emulators, RPCS3 included, is installed on the dev machine).

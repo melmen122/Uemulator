@@ -195,7 +195,7 @@ function createHandlers(ctx) {
     'dialog:pickFile': async (kind) => {
       validatePickKind(kind);
       const filters = kind === 'rom'
-        ? [{ name: 'ROMs', extensions: EXTENSIONS.map((e) => e.slice(1)) }, { name: 'All files', extensions: ['*'] }]
+        ? [{ name: 'ROMs', extensions: [...EXTENSIONS.map((e) => e.slice(1)), 'bin'] }, { name: 'All files', extensions: ['*'] }]
         : [{ name: 'Executables', extensions: platform === 'win32' ? ['exe'] : ['*'] }];
       const res = await showOpen({ properties: ['openFile'], filters });
       return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0];
