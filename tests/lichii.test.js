@@ -118,7 +118,8 @@ test('switch system: ryujinx, lichii alternative; switch2 is lichii-only', () =>
   assert.equal(s2.name, 'Nintendo Switch 2');
   assert.equal(s2.coreId, 'lichii');
   assert.deepEqual(s2.altCores, []);
-  assert.deepEqual(s2.extensions, []);
+  assert.deepEqual(s2.extensions, ['.nup']); // Lichii's own package format
+  assert.equal(detectSystem('/r/Game.NUP'), 'switch2');
   assert.deepEqual(coresForSystem('switch2'), ['lichii']);
 });
 

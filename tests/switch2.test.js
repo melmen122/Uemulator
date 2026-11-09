@@ -169,6 +169,27 @@ test('scan classifies by name, by PFS0 tik, and defaults to switch', async () =>
   });
 });
 
+test('scan: .nup is always switch2 (Lichii-only format), nested folders and any title ID', async () => {
+  // Mirrors a real download layout: <folder>/<folder>/<title> [04…][v…].nup next to unrelated archives.
+  const a = touch(`OoT NUP/OoT NUP/The Legend of Zelda [0400486024DEC000][v131072].nup`, 'NUP\x01');
+  touch('Plain.nup', 'junk');
+  touch(`Odd [${S1}].nup`);
+  touch('OoT NUP/emulator.rar', 'Rar!');
+  touch('OoT NUP/OoT NUP/emulator.zip', 'PK');
+  await both(async (kind, scan) => {
+    const games = await scan([root]);
+    const m = byBase(games);
+    assert.equal(m['The Legend of Zelda [0400486024DEC000][v131072].nup'].system, 'switch2', kind);
+    assert.equal(m['The Legend of Zelda [0400486024DEC000][v131072].nup'].id, gameId(a), kind);
+    assert.equal(m['Plain.nup'].system, 'switch2', kind);
+    assert.equal(m[`Odd [${S1}].nup`].system, 'switch2', kind);
+    assert.equal(games.length, 3, `${kind}: archives are not games`);
+  });
+  const store = createStore({ dir: root });
+  store.setLibrary({ folders: [root], games: [{ id: gameId(a), title: 'OoT', path: a, system: 'switch2', size: 4, lastPlayed: null, favorite: false }] });
+  assert.equal(store.getLibrary().games.length, 1, 'store keeps a .nup as switch2');
+});
+
 test('scan: .xci/.nca/.nro are name-based only and never opened', async () => {
   touch('A.xci', nspWith(S2));
   touch(`B [${S2}].xci`);

@@ -6,9 +6,9 @@ const path = require('path');
 const SYSTEMS = Object.freeze([
   { id: 'n64', name: 'Nintendo 64', extensions: ['.z64', '.n64', '.v64'], coreId: 'project64', altCores: [] },
   { id: 'switch', name: 'Nintendo Switch', extensions: ['.nsp', '.xci', '.nca', '.nro'], coreId: 'ryujinx', altCores: ['lichii'] },
-  // Switch 2 has no file extensions of its own (.nsp/.xci stay with 'switch'): the library scanner assigns it by
-  // title ID (see switch2.js), so detectSystem never returns it.
-  { id: 'switch2', name: 'Nintendo Switch 2', extensions: [], coreId: 'lichii', altCores: [] },
+  // Switch 2 shares .nsp/.xci with 'switch': the library scanner moves those here by title ID (see switch2.js).
+  // .nup is Lichii's own package format (only Lichii opens it), so it always belongs here, whatever its title ID.
+  { id: 'switch2', name: 'Nintendo Switch 2', extensions: ['.nup'], coreId: 'lichii', altCores: [] },
   // NOTE: ".app" is also the macOS bundle extension (a directory). Callers must only treat
   // regular files as ROMs (library.js enforces this); detectSystem only looks at the extension.
   { id: '3ds', name: 'Nintendo 3DS', extensions: ['.3ds', '.cci', '.cxi', '.cia', '.3dsx', '.app'], coreId: 'azahar', altCores: [] },
