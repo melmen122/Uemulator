@@ -4,6 +4,7 @@ const nodeFs = require('fs');
 const nodePath = require('path');
 const crypto = require('crypto');
 const { detectSystem, isUsrdirEboot } = require('./systems');
+const { PFS0_HEAD_BYTES, classifyTitleId, titleIdFromPath, parsePfs0TitleId } = require('./switch2');
 
 const MAX_DEPTH = 6;
 // Compared case-insensitively. The last two are Windows system folders present at the root of every NTFS drive
@@ -150,7 +151,7 @@ function* walk(st, dir, depth) {
         if (st.stop) return;
       }
     } else if (isFile) {
-      const system = detectSystem(full);
+      let system = detectSystem(full);
       if (!system) continue;
       // EBOOT.BIN only counts inside a USRDIR folder (avoids random matches).
       if (system === 'ps3' && nodePath.basename(full).toLowerCase() === 'eboot.bin' && !isUsrdirEboot(full)) continue;
@@ -174,6 +175,22 @@ function* walk(st, dir, depth) {
         } catch { /* fall back silently */ }
       } else {
         title = titleFromPath(full);
+      }
+      if (system === 'switch') {
+        // Switch 1 vs 2: title ID from the name/folders; for .nsp fall back to the PFS0 ticket name.
+        // .xci/.nca/.nro cannot be identified without keys, so they stay name-based only.
+        let kind = classifyTitleId(titleIdFromPath(full));
+        if (!kind && /\.nsp$/i.test(full)) {
+          try {
+            // stat first (follows symlinks): opening a FIFO/device would block and wedge the scan.
+            const nspStat = yield ['stat', full];
+            if (nspStat && typeof nspStat.isFile === 'function' && nspStat.isFile()) {
+              const head = yield ['readHead', full, PFS0_HEAD_BYTES];
+              kind = classifyTitleId(parsePfs0TitleId(head));
+            }
+          } catch { /* fall back to Switch 1 */ }
+        }
+        if (kind === 'switch2') system = 'switch2';
       }
       st.found.set(id, {
         id,

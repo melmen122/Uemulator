@@ -6,7 +6,7 @@ game library, launcher and settings UI.
 | System | Core | Upstream | Language / build | License |
 |---|---|---|---|---|
 | Nintendo 64 | Project64 | github.com/project64/project64 | C++ / MSBuild (Windows); macOS and Linux run the exe via Wine | GPL-2.0 |
-| Nintendo Switch | Ryujinx (Ryubing); Lichii as alternate (`switchCore`) | git.ryujinx.app/ryubing/ryujinx (moved off GitHub); github.com/zortos293/Lichii (branch `nx2`) | C# / .NET SDK 10.0.301 (`cores/ryujinx/global.json`); Lichii: C++ / CMake + Ninja, Qt 6 | MIT; Lichii GPL-3.0-or-later |
+| Nintendo Switch / Switch 2 | Switch: Ryujinx (Ryubing); Switch 2: Lichii (Lichii also lists Switch, but Switch defaults to Ryujinx) | git.ryujinx.app/ryubing/ryujinx (moved off GitHub); github.com/zortos293/Lichii (branch `nx2`) | C# / .NET SDK 10.0.301 (`cores/ryujinx/global.json`); Lichii: C++ / CMake + Ninja, Qt 6 | MIT; Lichii GPL-3.0-or-later |
 | Nintendo 3DS | Azahar | github.com/azahar-emu/azahar | C++ / CMake + Qt6 | GPL-2.0 |
 | Game Boy / Color | PyBoy | github.com/Baekalfen/PyBoy | Python (+Cython) / pip | LGPL-3.0 |
 | GBA / GB / GBC | mGBA | github.com/mgba-emu/mgba | C / CMake | MPL-2.0 |
@@ -66,6 +66,7 @@ Uemulator/
       ipc.js                  all ipcMain.handle channels + argument validation
       store.js                JSON settings/library persistence in app.getPath('userData')
       library.js              ROM folder scanning + system detection
+      switch2.js              Switch 1 vs Switch 2 by title ID (name, then .nsp PFS0 ticket); pure
       systems.js              system table: id, name, extensions, coreId
       processes.js            running-game registry (spawn, log ring buffer, stop)
       cores/
@@ -86,15 +87,21 @@ Uemulator/
 |---|---|---|---|
 | `n64` | Nintendo 64 | .z64 .n64 .v64 | project64 |
 | `switch` | Nintendo Switch | .nsp .xci .nca .nro | ryujinx (alt: lichii) |
+| `switch2` | Nintendo Switch 2 | none (assigned by the library scan from the title ID, see `switch2.js`) | lichii |
 | `3ds` | Nintendo 3DS | .3ds .cci .cxi .cia .3dsx .app | azahar |
 | `gba` | Game Boy Advance | .gba | mgba |
 | `gbc` | Game Boy Color | .gbc | mgba (alt: pyboy) |
 | `gb` | Game Boy | .gb | mgba (alt: pyboy) |
 | `ps3` | PlayStation 3 | .iso, EBOOT.BIN (only inside a `USRDIR` folder; matched by file name) | rpcs3 |
 
-The user can choose which core handles GB/GBC (`mgba` or `pyboy`) and which core handles Switch
-(`ryujinx` or `lichii`) in Settings. Matching is
-case-insensitive on the file extension.
+The user can choose which core handles GB/GBC (`mgba` or `pyboy`) in Settings. There is no Switch core
+setting. Matching is case-insensitive on the file extension.
+
+Switch vs Switch 2 is decided in the library scan, not by extension. A `switch` file becomes `switch2`
+when its title ID starts with `04` (`01` is Switch 1). The title ID comes from a bracketed 16-hex ID
+in the file or up to 3 parent folder names, else from the `<titleid><keygen>.tik` entry in an `.nsp`
+PFS0 header (first 64 KiB). `.xci`, `.nca` and `.nro` are name-based only. Unrecognised files stay
+`switch`. The store accepts `switch2` for a path detected as `switch`.
 
 PS3 games are `.iso` files or `EBOOT.BIN` files directly inside a `USRDIR` folder (disc dumps:
 `<Game>/PS3_GAME/USRDIR/EBOOT.BIN`; installed or PSN: `<TITLEID>/USRDIR/EBOOT.BIN`). `.pkg` is not
@@ -148,7 +155,7 @@ path is always last.
 | `onSessionEvent(cb)` | `game:event` (push) | `{type:'log'\|'exit', sessionId, line?, code?}` |
 | `openExternal(url)` | `shell:openExternal` (http/https only) | `true` |
 
-Settings shape: `{ fullscreen:false, gbCore:'mgba', switchCore:'ryujinx', corePaths:{ [coreId]: string|null }, theme:'system' }`.
+Settings shape: `{ fullscreen:false, gbCore:'mgba', corePaths:{ [coreId]: string|null }, theme:'system' }`. Unknown keys such as `switchCore` are rejected by `setSettings`, and an old settings file with `switchCore` loads with that key dropped.
 
 ### 3.4 Security baseline
 - `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, no `remote`. The renderer
@@ -198,7 +205,7 @@ missing toolchain never fails the others.
   resolved path and its source, plus "Set path…", "Reset" and links to the homepage and license.
   The RPCS3 card also notes that PS3 firmware must be installed inside RPCS3.
 - **Running** panel: active sessions with a live log tail and Stop.
-- **Settings**: ROM folders, fullscreen on launch, GB/GBC core choice, Switch core choice and theme.
+- **Settings**: ROM folders, fullscreen on launch, GB/GBC core choice and theme.
 - Keyboard: `/` focuses search, Enter launches the selected game, and arrow keys move the grid
   selection. The UI follows the system light/dark theme.
 

@@ -12,7 +12,8 @@ Uemulator runs on macOS, Linux and Windows x64. See [Windows](#windows) for the 
 | System | Extensions | Core | Upstream | License |
 |---|---|---|---|---|
 | Nintendo 64 | `.z64` `.n64` `.v64` | Project64 (Windows native; macOS and Linux via Wine) | https://github.com/project64/project64 | GPL-2.0 |
-| Nintendo Switch | `.nsp` `.xci` `.nca` `.nro` | Ryujinx (Ryubing, default) or Lichii (very experimental) | https://git.ryujinx.app/ryubing/ryujinx, https://github.com/zortos293/Lichii | MIT, GPL-3.0-or-later |
+| Nintendo Switch | `.nsp` `.xci` `.nca` `.nro` | Ryujinx (Ryubing) | https://git.ryujinx.app/ryubing/ryujinx | MIT |
+| Nintendo Switch 2 | Same files as Switch, classified by title ID | Lichii (very experimental) | https://github.com/zortos293/Lichii | GPL-3.0-or-later |
 | Nintendo 3DS | `.3ds` `.cci` `.cxi` `.cia` `.3dsx` `.app` | Azahar | https://github.com/azahar-emu/azahar | GPL-2.0 |
 | Game Boy Advance | `.gba` | mGBA | https://github.com/mgba-emu/mgba | MPL-2.0 |
 | Game Boy | `.gb` | mGBA (default) or PyBoy | https://github.com/mgba-emu/mgba, https://github.com/Baekalfen/PyBoy | MPL-2.0, LGPL-3.0 |
@@ -20,18 +21,28 @@ Uemulator runs on macOS, Linux and Windows x64. See [Windows](#windows) for the 
 | PlayStation 3 | `.iso`, `EBOOT.BIN` (inside `USRDIR`) | RPCS3 | https://github.com/rpcs3/rpcs3 | GPL-2.0 |
 
 Ryujinx moved off GitHub. Use the `git.ryujinx.app` URL above; the GitHub Ryubing org has no
-emulator repository. The GB/GBC core is chosen in Settings, and so is the Switch core (Ryujinx or
-Lichii). Extension matching is case-insensitive.
+emulator repository. The GB/GBC core is chosen in Settings. Switch and Switch 2 have no core setting.
+Extension matching is case-insensitive.
 
-### Nintendo Switch cores
+### Nintendo Switch and Switch 2
 
-- Ryujinx is the default. Settings > Switch core > Lichii makes Lichii launch Switch games instead.
-- Lichii describes itself as a Switch and Switch 2 emulator. Uemulator only matches Switch files by
-  extension (`.nsp`, `.xci`, `.nca`, `.nro`) and does not detect the console generation; the Switch core
-  setting decides which core runs. Which Switch 2 dump formats Lichii accepts is up to Lichii, not verified here.
+- Switch 1 games run in Ryujinx. Switch 2 games run in Lichii.
+- Switch and Switch 2 are separate systems in the library, each with its own tab and badge.
+- Files are matched by extension (`.nsp`, `.xci`, `.nca`, `.nro`). A file is listed as Switch 2 only
+  when its title ID starts with `04`. A title ID starting with `01` is Switch 1.
+- The title ID comes from a best-effort guess:
+  - `.nsp`: read from the ticket name (`<titleid><keygen>.tik`) in the file's PFS0 header, or from a
+    bracketed 16-digit ID in the file name or in up to 3 parent folder names.
+  - `.xci`, `.nca`, `.nro`: name and folder only. Their title IDs cannot be read without keys.
+  - So an `.nsp` without a ticket, or any `.xci`, is detected as Switch 2 only when its file or folder
+    name contains the bracketed title ID, for example `Game [0400…].xci`.
+- Anything not recognised is treated as Switch 1 and launches in Ryujinx.
+- The `04` rule comes from observed Switch 2 title IDs, not from a specification. A wrong guess can
+  put a game under the wrong system or the wrong core.
+- Lichii is also registered for Switch 1, but Play always uses the default core for the system, so
+  Switch 1 games launch in Ryujinx.
 - Lichii is launched with `-g <game>`, plus `-f` when fullscreen is on.
-- Both Switch cores need keys and firmware that you obtain legally yourself. Uemulator does not
-  supply them.
+- Both cores need keys and firmware that you obtain legally yourself. Uemulator does not supply them.
 
 ### PlayStation 3 library rules
 

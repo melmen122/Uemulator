@@ -26,7 +26,7 @@ test('ps3 system is registered with rpcs3 as default core', () => {
   assert.equal(coreForSystem('ps3', {}), 'rpcs3');
   assert.equal(coreForSystem('ps3', { gbCore: 'pyboy' }), 'rpcs3');
   assert.deepEqual(coresForSystem('ps3'), ['rpcs3']);
-  assert.equal(SYSTEMS.length, 7);
+  assert.equal(SYSTEMS.length, 8);
 });
 
 test('detectSystem: .iso (any case) is ps3', () => {

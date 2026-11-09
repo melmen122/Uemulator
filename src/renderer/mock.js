@@ -33,6 +33,8 @@ let games = EMPTY ? [] : [
   g('g06', 'Celeste', 'switch', 'nsp', 1200, N, { favorite: true }),
   g('g07', 'Metroid Dread', 'switch', 'xci', 3900, N),
   g('g08', 'The Legend of Zelda: Tears of the Kingdom — Collector’s Edition (Update 1.2.1 + DLC Pack)', 'switch', 'nsp', 16400, N),
+  g('g23', 'Mario Kart World', 'switch2', 'nsp', 21500, N, { lastPlayed: now - 4 * 3600e3 }),
+  g('g24', 'Donkey Kong Bananza', 'switch2', 'nsp', 9800, N),
   g('g09', 'Fire Emblem Awakening', '3ds', '3ds', 780, N, { lastPlayed: now - 45 * MIN }),
   g('g10', 'Animal Crossing New Leaf', '3ds', 'cia', 1100, N),
   g('g11', 'Pokemon Y', '3ds', '3ds', 1000, N),
@@ -47,12 +49,12 @@ let games = EMPTY ? [] : [
   g('g20', 'Super Mario Land', 'gb', 'gb', 0.06, H),
 ];
 
-let settings = { fullscreen: false, gbCore: 'mgba', switchCore: 'ryujinx', corePaths: {}, theme: params.get('theme') || 'system' };
+let settings = { fullscreen: false, gbCore: 'mgba', corePaths: {}, theme: params.get('theme') || 'system' };
 
 const CORE_DEFS = [
   { id: 'project64', name: 'Project64', systems: ['n64'], homepage: 'https://www.pj64-emu.com', license: 'GPL-2.0', base: PLATFORM === 'win32' ? { status: 'missing', exe: null, source: null } : { status: 'unsupported', exe: null, source: null } },
   { id: 'rpcs3', name: 'RPCS3', systems: ['ps3'], homepage: 'https://rpcs3.net', license: 'GPL-2.0', base: { status: 'missing', exe: null, source: null } },
-  { id: 'lichii', name: 'Lichii', systems: ['switch'], homepage: 'https://github.com/zortos293/Lichii', license: 'GPL-3.0-or-later', base: { status: 'missing', exe: null, source: null } },
+  { id: 'lichii', name: 'Lichii', systems: ['switch', 'switch2'], homepage: 'https://github.com/zortos293/Lichii', license: 'GPL-3.0-or-later', base: { status: 'missing', exe: null, source: null } },
   { id: 'ryujinx', name: 'Ryujinx', systems: ['switch'], homepage: 'https://ryujinx.app', license: 'MIT', base: { status: 'missing', exe: null, source: null } },
   { id: 'azahar', name: 'Azahar', systems: ['3ds'], homepage: 'https://azahar-emu.org', license: 'GPL-2.0', base: { status: 'ready', exe: '/Users/demo/Uemulator/bin/azahar/azahar', source: 'built' } },
   { id: 'pyboy', name: 'PyBoy', systems: ['gb', 'gbc'], homepage: 'https://github.com/Baekalfen/PyBoy', license: 'LGPL-3.0', base: { status: 'missing', exe: null, source: null } },
@@ -94,8 +96,7 @@ const library = () => clone({ folders: FOLDERS, games });
 
 function defaultCoreFor(game) {
   if (game.system === 'gb' || game.system === 'gbc') return settings.gbCore;
-  if (game.system === 'switch') return settings.switchCore;
-  return { n64: 'project64', ps3: 'rpcs3', switch: 'ryujinx', '3ds': 'azahar', gba: 'mgba' }[game.system];
+  return { n64: 'project64', ps3: 'rpcs3', switch: 'ryujinx', switch2: 'lichii', '3ds': 'azahar', gba: 'mgba' }[game.system];
 }
 
 function extraGames(folder) {

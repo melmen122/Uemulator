@@ -27,7 +27,8 @@ const NASTY = [
 test('lichii metadata', () => {
   assert.equal(lichii.id, 'lichii');
   assert.equal(lichii.name, 'Lichii');
-  assert.deepEqual(lichii.systems, ['switch']);
+  assert.deepEqual(lichii.systems, ['switch', 'switch2']);
+  assert.deepEqual(ryujinx.systems, ['switch']);
   assert.equal(lichii.homepage, 'https://github.com/zortos293/Lichii');
   assert.equal(lichii.license, 'GPL-3.0-or-later');
   assert.deepEqual(lichii.pathNames, ['lichii']);
@@ -105,27 +106,32 @@ test('registry lists seven cores ending with lichii', () => {
   assert.equal(d.license, 'GPL-3.0-or-later');
 });
 
-test('switch system: ryujinx default, lichii alternative; system set unchanged', () => {
+test('switch system: ryujinx, lichii alternative; switch2 is lichii-only', () => {
   const sw = getSystem('switch');
   assert.equal(sw.coreId, 'ryujinx');
   assert.deepEqual(sw.altCores, ['lichii']);
   assert.deepEqual(coresForSystem('switch'), ['ryujinx', 'lichii']);
-  assert.equal(SYSTEMS.length, 7);
+  assert.equal(SYSTEMS.length, 8);
   assert.deepEqual(sw.extensions, ['.nsp', '.xci', '.nca', '.nro']);
   assert.equal(detectSystem('/r/a.nsp'), 'switch');
+  const s2 = getSystem('switch2');
+  assert.equal(s2.name, 'Nintendo Switch 2');
+  assert.equal(s2.coreId, 'lichii');
+  assert.deepEqual(s2.altCores, []);
+  assert.deepEqual(s2.extensions, []);
+  assert.deepEqual(coresForSystem('switch2'), ['lichii']);
 });
 
-test('coreForSystem(switch) honours settings.switchCore, falls back to ryujinx', () => {
-  assert.equal(coreForSystem('switch', { switchCore: 'lichii' }), 'lichii');
-  assert.equal(coreForSystem('switch', { switchCore: 'ryujinx' }), 'ryujinx');
-  assert.equal(coreForSystem('switch', {}), 'ryujinx');
+test('coreForSystem: switch is always ryujinx, switch2 always lichii (stray switchCore ignored)', () => {
+  for (const st of [{ switchCore: 'lichii' }, { switchCore: 'ryujinx' }, { switchCore: 'mgba' }, {}, undefined]) {
+    assert.equal(coreForSystem('switch', st), 'ryujinx');
+    assert.equal(coreForSystem('switch2', st), 'lichii');
+  }
   assert.equal(coreForSystem('switch'), 'ryujinx');
-  assert.equal(coreForSystem('switch', undefined), 'ryujinx');
-  assert.equal(coreForSystem('switch', { switchCore: 'mgba' }), 'ryujinx');
-  assert.equal(coreForSystem('switch', { switchCore: 'pyboy' }), 'ryujinx');
+  assert.equal(coreForSystem('switch2'), 'lichii');
 });
 
-test('switchCore does not leak to other systems; gbCore does not affect switch', () => {
+test('gbCore does not affect switch/switch2; other systems unchanged', () => {
   const s = { switchCore: 'lichii' };
   assert.equal(coreForSystem('gb', s), 'mgba');
   assert.equal(coreForSystem('gba', s), 'mgba');
@@ -133,6 +139,9 @@ test('switchCore does not leak to other systems; gbCore does not affect switch',
   assert.equal(coreForSystem('n64', s), 'project64');
   assert.equal(coreForSystem('ps3', s), 'rpcs3');
   assert.equal(coreForSystem('switch', { gbCore: 'pyboy' }), 'ryujinx');
+  assert.equal(coreForSystem('switch2', { gbCore: 'pyboy' }), 'lichii');
+  assert.equal(detectSystem('/r/a.nsp'), 'switch');
+  for (const e of ['.nsp', '.xci', '.nca', '.nro']) assert.notEqual(detectSystem('/r/[0400C3F00006E000]' + e), 'switch2');
 });
 
 // ---- resolution ----
@@ -169,39 +178,38 @@ let dir;
 test.beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uemu-lichii-')); });
 test.afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
-test('store: switchCore defaults to ryujinx; corePaths has lichii = null', () => {
-  assert.equal(defaultSettings().switchCore, 'ryujinx');
+test('store: no switchCore default; corePaths has lichii = null', () => {
+  assert.equal('switchCore' in defaultSettings(), false);
   const s = createStore({ dir }).getSettings();
-  assert.equal(s.switchCore, 'ryujinx');
+  assert.equal('switchCore' in s, false);
   assert.equal(s.corePaths.lichii, null);
 });
 
-test('store: switchCore accepts ryujinx/lichii, rejects anything else, persists', () => {
-  assert.deepEqual(validateSettingsPatch({ switchCore: 'lichii' }), { switchCore: 'lichii' });
-  assert.deepEqual(validateSettingsPatch({ switchCore: 'ryujinx' }), { switchCore: 'ryujinx' });
+test('store: switchCore is rejected as an unknown key and nothing persists', () => {
   const st = createStore({ dir });
-  for (const bad of ['mgba', '', 'Lichii', null, 5, ['lichii']]) {
-    assert.throws(() => st.setSettings({ switchCore: bad }), Error, JSON.stringify(bad));
-  }
-  assert.equal(st.getSettings().switchCore, 'ryujinx');
-  st.setSettings({ switchCore: 'lichii', corePaths: { lichii: '/x/lichii' } });
+  for (const v of ['lichii', 'ryujinx', 'mgba']) assert.throws(() => st.setSettings({ switchCore: v }), Error);
+  st.setSettings({ corePaths: { lichii: '/x/lichii' } });
   const re = createStore({ dir }).getSettings();
-  assert.equal(re.switchCore, 'lichii');
   assert.equal(re.corePaths.lichii, '/x/lichii');
+  assert.equal('switchCore' in re, false);
 });
 
-test('store: invalid switchCore on disk falls back to ryujinx', () => {
-  fs.writeFileSync(path.join(dir, 'uemulator.json'), JSON.stringify({ settings: { switchCore: 'mgba' } }));
-  assert.equal(createStore({ dir }).getSettings().switchCore, 'ryujinx');
+test('store: old settings file containing switchCore loads with the key dropped', () => {
+  for (const v of ['lichii', 'mgba']) {
+    fs.writeFileSync(path.join(dir, 'uemulator.json'), JSON.stringify({ settings: { switchCore: v, fullscreen: true } }));
+    const s = createStore({ dir }).getSettings();
+    assert.equal('switchCore' in s, false);
+    assert.equal(s.fullscreen, true);
+  }
 });
 
 // ---- IPC ----
 const NSP = '/g/game.nsp';
-function harness(settings) {
+function harness(settings, system = 'switch') {
   const store = createStore({ dir });
   if (settings) store.setSettings(settings);
   store.setLibrary({ folders: [], games: [
-    { id: 'bbbbbbbbbbbb', title: 'S', path: NSP, system: 'switch', size: 1, lastPlayed: null, favorite: false },
+    { id: 'bbbbbbbbbbbb', title: 'S', path: NSP, system, size: 1, lastPlayed: null, favorite: false },
   ] });
   const started = [];
   const h = ipc.createHandlers({
@@ -224,28 +232,28 @@ test('game:launch switch routes to ryujinx by default', async () => {
   assert.deepEqual(t.started[0].args, [NSP]);
 });
 
-test('game:launch switch routes to lichii when switchCore=lichii: -g <path>', async () => {
-  const t = harness({ corePaths: PATHS, switchCore: 'lichii' });
+test('game:launch switch2 game routes to lichii: -g <path>', async () => {
+  const t = harness({ corePaths: PATHS }, 'switch2');
   await t.h['game:launch']('bbbbbbbbbbbb');
   assert.equal(t.started[0].command, '/my/lichii');
   assert.deepEqual(t.started[0].args, ['-g', NSP]);
 });
 
 test('game:launch lichii fullscreen setting adds -f before -g', async () => {
-  const t = harness({ corePaths: PATHS, switchCore: 'lichii', fullscreen: true });
+  const t = harness({ corePaths: PATHS, fullscreen: true }, 'switch2');
   await t.h['game:launch']('bbbbbbbbbbbb');
   assert.deepEqual(t.started[0].args, ['-f', '-g', NSP]);
 });
 
-test('game:launch explicit coreId overrides the preference; non-switch cores are rejected', async () => {
+test('game:launch explicit lichii on a switch game allowed; mgba rejected on switch and switch2', async () => {
   const t = harness({ corePaths: PATHS });
   await t.h['game:launch']('bbbbbbbbbbbb', { coreId: 'lichii' });
   assert.equal(t.started[0].command, '/my/lichii');
-  const t2 = harness({ corePaths: PATHS, switchCore: 'lichii' });
-  await t2.h['game:launch']('bbbbbbbbbbbb', { coreId: 'ryujinx' });
-  assert.equal(t2.started[0].command, '/my/ryujinx');
   await assert.rejects(t.h['game:launch']('bbbbbbbbbbbb', { coreId: 'mgba' }), /cannot run/);
   assert.equal(t.started.length, 1);
+  const t2 = harness({ corePaths: PATHS }, 'switch2');
+  await assert.rejects(t2.h['game:launch']('bbbbbbbbbbbb', { coreId: 'mgba' }), /cannot run/);
+  assert.equal(t2.started.length, 0);
 });
 
 // ---- build-cores CLI (never builds: --help / --check / usage errors only) ----

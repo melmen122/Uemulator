@@ -25,7 +25,7 @@ test('metadata', () => {
   assert.ok(project64.platforms.includes('darwin') && project64.platforms.includes('win32'));
   assert.deepEqual(azahar.systems, ['3ds']);
   assert.deepEqual(ryujinx.systems, ['switch']);
-  assert.deepEqual(lichii.systems, ['switch']);
+  assert.deepEqual(lichii.systems, ['switch', 'switch2']);
   for (const c of [mgba, pyboy, azahar, ryujinx, lichii]) {
     for (const p of ['darwin', 'win32', 'linux']) assert.ok(c.platforms.includes(p), `${c.id} ${p}`);
   }

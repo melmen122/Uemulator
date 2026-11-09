@@ -9,13 +9,12 @@ const { detectSystem } = require('./systems');
 const FILE_NAME = 'uemulator.json';
 const THEMES = Object.freeze(['system', 'light', 'dark']);
 const GB_CORE_IDS = Object.freeze(['mgba', 'pyboy']);
-const SWITCH_CORE_IDS = Object.freeze(['ryujinx', 'lichii']);
 const MAX_PATH_LEN = 4096;
 
 function defaultSettings() {
   const corePaths = {};
   for (const c of CORES) corePaths[c.id] = null;
-  return { fullscreen: false, gbCore: 'mgba', switchCore: 'ryujinx', corePaths, theme: 'system' };
+  return { fullscreen: false, gbCore: 'mgba', corePaths, theme: 'system' };
 }
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -37,10 +36,6 @@ function validateSettingsPatch(patch) {
       case 'gbCore':
         if (!GB_CORE_IDS.includes(value)) throw new Error('Setting "gbCore" must be "mgba" or "pyboy"');
         out.gbCore = value;
-        break;
-      case 'switchCore':
-        if (!SWITCH_CORE_IDS.includes(value)) throw new Error('Setting "switchCore" must be "ryujinx" or "lichii"');
-        out.switchCore = value;
         break;
       case 'theme':
         if (!THEMES.includes(value)) throw new Error('Setting "theme" must be "system", "light" or "dark"');
@@ -76,10 +71,16 @@ function applyPatch(settings, patch) {
   return next;
 }
 
+/** A stored game's system must match its path; the one exception is Switch files, which may be 'switch' or 'switch2' (title-ID based). */
+function systemMatchesPath(system, filePath) {
+  const detected = detectSystem(filePath);
+  return detected === system || (detected === 'switch' && system === 'switch2');
+}
+
 function sanitizeGames(games) {
   if (!Array.isArray(games)) return [];
   return games.filter((g) => isPlainObject(g) && typeof g.id === 'string' && typeof g.path === 'string' && typeof g.system === 'string'
-    && nodePath.isAbsolute(g.path) && detectSystem(g.path) === g.system)
+    && nodePath.isAbsolute(g.path) && systemMatchesPath(g.system, g.path))
     .map((g) => ({
       id: g.id,
       title: typeof g.title === 'string' ? g.title : nodePath.basename(g.path),

@@ -9,7 +9,7 @@ function pathFor(platform) { return platform === 'win32' ? nodePath.win32 : node
 module.exports = {
   id: 'lichii',
   name: 'Lichii',
-  systems: ['switch'],
+  systems: ['switch', 'switch2'],
   platforms: ['darwin', 'win32', 'linux'],
   homepage: 'https://github.com/zortos293/Lichii',
   license: 'GPL-3.0-or-later',

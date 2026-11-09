@@ -14,7 +14,7 @@ test('defaults on first load match plan shape', () => {
   const s = createStore({ dir }).getSettings();
   assert.equal(s.fullscreen, false);
   assert.equal(s.gbCore, 'mgba');
-  assert.equal(s.switchCore, 'ryujinx');
+  assert.equal('switchCore' in s, false);
   assert.equal(s.theme, 'system');
   assert.deepEqual(Object.keys(s.corePaths).sort(), ['azahar', 'lichii', 'mgba', 'project64', 'pyboy', 'rpcs3', 'ryujinx']);
   assert.ok(Object.values(s.corePaths).every((v) => v === null));
@@ -60,8 +60,8 @@ test('invalid patches are rejected and leave state unchanged', () => {
     { bogus: 1 },
     { fullscreen: 'yes' },
     { gbCore: 'vba' },
-    { switchCore: 'mgba' },
-    { switchCore: '' },
+    { switchCore: 'lichii' },
+    { switchCore: 'ryujinx' },
     { theme: 'neon' },
     { corePaths: 'x' },
     { corePaths: { unknown: '/x' } },
@@ -79,8 +79,7 @@ test('invalid patches are rejected and leave state unchanged', () => {
 
 test('validateSettingsPatch accepts valid enums', () => {
   assert.deepEqual(validateSettingsPatch({ theme: 'light', gbCore: 'pyboy' }), { theme: 'light', gbCore: 'pyboy' });
-  assert.deepEqual(validateSettingsPatch({ switchCore: 'lichii' }), { switchCore: 'lichii' });
-  assert.deepEqual(validateSettingsPatch({ switchCore: 'ryujinx' }), { switchCore: 'ryujinx' });
+  assert.throws(() => validateSettingsPatch({ switchCore: 'lichii' }));
   assert.deepEqual(validateSettingsPatch({}), {});
 });
 

@@ -5,6 +5,7 @@ export const SYSTEMS = {
   n64: { id: 'n64', name: 'Nintendo 64', short: 'N64' },
   ps3: { id: 'ps3', name: 'PlayStation 3', short: 'PS3' },
   switch: { id: 'switch', name: 'Nintendo Switch', short: 'Switch' },
+  switch2: { id: 'switch2', name: 'Nintendo Switch 2', short: 'Switch 2' },
   '3ds': { id: '3ds', name: 'Nintendo 3DS', short: '3DS' },
   gba: { id: 'gba', name: 'Game Boy Advance', short: 'GBA' },
   gbc: { id: 'gbc', name: 'Game Boy Color', short: 'GBC' },
@@ -16,12 +17,13 @@ export const TABS = [
   { id: 'n64', label: 'N64', title: 'Nintendo 64', systems: ['n64'] },
   { id: 'ps3', label: 'PS3', title: 'PlayStation 3', systems: ['ps3'] },
   { id: 'switch', label: 'Switch', title: 'Nintendo Switch', systems: ['switch'] },
+  { id: 'switch2', label: 'Switch 2', title: 'Nintendo Switch 2', systems: ['switch2'] },
   { id: '3ds', label: '3DS', title: 'Nintendo 3DS', systems: ['3ds'] },
   { id: 'gba', label: 'GBA', title: 'Game Boy Advance', systems: ['gba'] },
   { id: 'gb', label: 'GB/GBC', title: 'Game Boy / Color', systems: ['gb', 'gbc'] },
 ];
 
-const DEFAULT_CORE = { n64: 'project64', ps3: 'rpcs3', switch: 'ryujinx', '3ds': 'azahar', gba: 'mgba' };
+const DEFAULT_CORE = { n64: 'project64', ps3: 'rpcs3', switch: 'ryujinx', switch2: 'lichii', '3ds': 'azahar', gba: 'mgba' };
 
 export const state = {
   view: 'library',
@@ -33,7 +35,7 @@ export const state = {
   cores: [],
   games: [],
   folders: [],
-  settings: { fullscreen: false, gbCore: 'mgba', switchCore: 'ryujinx', corePaths: {}, theme: 'system' },
+  settings: { fullscreen: false, gbCore: 'mgba', corePaths: {}, theme: 'system' },
   sessions: new Map(),
   launching: new Set(),
 };
@@ -71,7 +73,6 @@ export const gameTitle = (id) => (gameById(id) || {}).title || 'Unknown game';
 
 export function coreIdForSystem(system) {
   if (system === 'gb' || system === 'gbc') return state.settings.gbCore === 'pyboy' ? 'pyboy' : 'mgba';
-  if (system === 'switch') return state.settings.switchCore === 'lichii' ? 'lichii' : 'ryujinx';
   return DEFAULT_CORE[system] || null;
 }
 export const coreForGame = (game) => coreById(coreIdForSystem(game.system));
@@ -317,7 +318,7 @@ export async function updateSettings(patch) {
   state.settings = { ...state.settings, ...patch };
   if ('theme' in patch) applyTheme();
   emit('settings');
-  if ('gbCore' in patch || 'switchCore' in patch) emit('library');
+  if ('gbCore' in patch) emit('library');
   try {
     const res = await api().setSettings(patch);
     if (res && typeof res === 'object') state.settings = { ...state.settings, ...res };
@@ -327,7 +328,7 @@ export async function updateSettings(patch) {
     applyTheme();
   }
   emit('settings');
-  if ('gbCore' in patch || 'switchCore' in patch) emit('library');
+  if ('gbCore' in patch) emit('library');
 }
 
 export async function openExternal(url) {
