@@ -33,13 +33,19 @@ export function createSettingsView() {
     control: segmented({ label: 'Game Boy and Game Boy Color core', options: [{ value: 'mgba', label: 'mGBA' }, { value: 'pyboy', label: 'PyBoy' }], value: state.settings.gbCore, onChange: (v) => updateSettings({ gbCore: v }) }),
     note: gbHint,
   });
+  const switchHint = h('div', { class: 'row-note' });
+  const switchCore = row({
+    title: 'Switch core', desc: 'Which emulator plays Switch games. Lichii also runs Switch 2 games and is very experimental.',
+    control: segmented({ label: 'Switch core', options: [{ value: 'ryujinx', label: 'Ryujinx' }, { value: 'lichii', label: 'Lichii' }], value: state.settings.switchCore, onChange: (v) => updateSettings({ switchCore: v }) }),
+    note: switchHint,
+  });
   const theme = row({
     title: 'Theme', desc: 'System follows your operating system’s light or dark setting.',
     control: segmented({ label: 'Theme', options: [{ value: 'system', label: 'System' }, { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }], value: state.settings.theme, onChange: (v) => updateSettings({ theme: v }) }),
   });
   const prefs = h('section', { class: 'panel', 'aria-labelledby': 'set-prefs' },
     h('div', { class: 'panel-head' }, h('div', null, h('h2', { class: 'panel-title', id: 'set-prefs' }, 'Preferences'))),
-    h('div', { class: 'rows' }, fullscreen.el, gbCore.el, theme.el));
+    h('div', { class: 'rows' }, fullscreen.el, gbCore.el, switchCore.el, theme.el));
 
   const el = h('section', { class: 'view', 'aria-labelledby': 'settings-title' },
     viewHead({ id: 'settings-title', title: 'Settings' }),
@@ -58,7 +64,14 @@ export function createSettingsView() {
     }
     fullscreen.ctl.set(state.settings.fullscreen);
     gbCore.ctl.set(state.settings.gbCore);
+    switchCore.ctl.set(state.settings.switchCore);
     theme.ctl.set(state.settings.theme);
+    const chosenSw = coreById(state.settings.switchCore);
+    clear(switchHint);
+    if (chosenSw && chosenSw.status !== 'ready') {
+      switchHint.append(`${chosenSw.name} ${chosenSw.status === 'unsupported' ? 'isn’t supported on this OS' : 'isn’t installed yet'}, so Switch games can’t launch. Set its path in Cores.`);
+    }
+    switchHint.hidden = !switchHint.firstChild;
     const chosen = coreById(state.settings.gbCore);
     clear(gbHint);
     if (chosen && chosen.status !== 'ready') {

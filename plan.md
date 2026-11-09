@@ -1,12 +1,12 @@
 # Uemulator — Plan
 
-One local desktop app (Node + Electron) that unifies six open-source emulators behind a single
+One local desktop app (Node + Electron) that unifies seven open-source emulators behind a single
 game library, launcher and settings UI.
 
 | System | Core | Upstream | Language / build | License |
 |---|---|---|---|---|
 | Nintendo 64 | Project64 | github.com/project64/project64 | C++ / MSBuild (Windows); macOS and Linux run the exe via Wine | GPL-2.0 |
-| Nintendo Switch | Ryujinx (Ryubing) | git.ryujinx.app/ryubing/ryujinx (moved off GitHub) | C# / .NET SDK 10.0.301 (`cores/ryujinx/global.json`) | MIT |
+| Nintendo Switch | Ryujinx (Ryubing); Lichii as alternate (`switchCore`) | git.ryujinx.app/ryubing/ryujinx (moved off GitHub); github.com/zortos293/Lichii (branch `nx2`) | C# / .NET SDK 10.0.301 (`cores/ryujinx/global.json`); Lichii: C++ / CMake + Ninja, Qt 6 | MIT; Lichii GPL-3.0-or-later |
 | Nintendo 3DS | Azahar | github.com/azahar-emu/azahar | C++ / CMake + Qt6 | GPL-2.0 |
 | Game Boy / Color | PyBoy | github.com/Baekalfen/PyBoy | Python (+Cython) / pip | LGPL-3.0 |
 | GBA / GB / GBC | mGBA | github.com/mgba-emu/mgba | C / CMake | MPL-2.0 |
@@ -14,7 +14,7 @@ game library, launcher and settings UI.
 
 ## 1. Key decision: shell + process adapters, not a merged codebase
 
-The six emulators use four languages and four build systems, and three of them have their own GUI
+The seven emulators use four languages and four build systems, and three of them have their own GUI
 toolkits. Merging their source into one binary isn't realistic and would break their licenses'
 separation. So the plan is:
 
@@ -56,7 +56,7 @@ Uemulator/
   package.json                electron, electron-builder; scripts: start, test, build:cores, dist
   .gitmodules                 cores/* (shallow)
   cores/                      upstream submodules (never edited)
-    mgba/ pyboy/ project64/ azahar/ ryujinx/ rpcs3/
+    mgba/ pyboy/ project64/ azahar/ ryujinx/ rpcs3/ lichii/
   bin/                        build output per core (gitignored)
   scripts/
     build-cores.mjs           `node scripts/build-cores.mjs [coreId...]` (per-core build + toolchain checks)
@@ -70,7 +70,7 @@ Uemulator/
       processes.js            running-game registry (spawn, log ring buffer, stop)
       cores/
         index.js              registry: list adapters, resolve, status
-        mgba.js pyboy.js project64.js azahar.js ryujinx.js rpcs3.js
+        mgba.js pyboy.js project64.js azahar.js ryujinx.js rpcs3.js lichii.js
     preload/
       preload.js              contextBridge → window.uemu (typed, minimal API)
     renderer/
@@ -85,14 +85,15 @@ Uemulator/
 | id | name | extensions | default core |
 |---|---|---|---|
 | `n64` | Nintendo 64 | .z64 .n64 .v64 | project64 |
-| `switch` | Nintendo Switch | .nsp .xci .nca .nro | ryujinx |
+| `switch` | Nintendo Switch | .nsp .xci .nca .nro | ryujinx (alt: lichii) |
 | `3ds` | Nintendo 3DS | .3ds .cci .cxi .cia .3dsx .app | azahar |
 | `gba` | Game Boy Advance | .gba | mgba |
 | `gbc` | Game Boy Color | .gbc | mgba (alt: pyboy) |
 | `gb` | Game Boy | .gb | mgba (alt: pyboy) |
 | `ps3` | PlayStation 3 | .iso, EBOOT.BIN (only inside a `USRDIR` folder; matched by file name) | rpcs3 |
 
-The user can choose which core handles GB/GBC (`mgba` or `pyboy`) in Settings. Matching is
+The user can choose which core handles GB/GBC (`mgba` or `pyboy`) and which core handles Switch
+(`ryujinx` or `lichii`) in Settings. Matching is
 case-insensitive on the file extension.
 
 PS3 games are `.iso` files or `EBOOT.BIN` files directly inside a `USRDIR` folder (disc dumps:
@@ -147,7 +148,7 @@ path is always last.
 | `onSessionEvent(cb)` | `game:event` (push) | `{type:'log'\|'exit', sessionId, line?, code?}` |
 | `openExternal(url)` | `shell:openExternal` (http/https only) | `true` |
 
-Settings shape: `{ fullscreen:false, gbCore:'mgba', corePaths:{ [coreId]: string|null }, theme:'system' }`.
+Settings shape: `{ fullscreen:false, gbCore:'mgba', switchCore:'ryujinx', corePaths:{ [coreId]: string|null }, theme:'system' }`.
 
 ### 3.4 Security baseline
 - `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, no `remote`. The renderer
@@ -180,6 +181,7 @@ Settings shape: `{ fullscreen:false, gbCore:'mgba', corePaths:{ [coreId]: string
 | ryujinx | `dotnet publish cores/ryujinx/src/Ryujinx/Ryujinx.csproj -c Release -r <host RID> --self-contained true -o bin/ryujinx`. Executable `Ryujinx` (`Ryujinx.app/Contents/MacOS/Ryujinx` only for a system .app install). | .NET SDK 10.0.301 (`global.json`, `rollForward: latestFeature`) |
 | pyboy | Built from a copy in `bin/.build/pyboy-src` so pip never writes into `cores/`: `python3 -m venv bin/pyboy/venv` → `pip install <copy>` (deps: numpy, pysdl2, pysdl2-dll) | python3 ≥ 3.9, a C compiler (Cython) |
 | project64 | Windows: `git -C cores/project64 submodule update --init --recursive --depth 1` (GLideN64, SDL), then `msbuild Project64.sln /m /p:Configuration=Release /p:Platform=x64` → `cores/project64/Bin/x64/Release` copied to `bin/project64`. macOS: no Project64 build. Downloads Wine 11.18 (Gcenx `macOS_Wine_builds`, x86_64, ~190 MB), checks SHA-256 before extraction, extracts to `bin/wine/`, and symlinks `<userData>/runtime/wine` to it. A smoke test (`wine cmd /c ver`) is reported but not fatal. Linux: not built here (uses `wine` from PATH). | Windows: git, Visual Studio 2019+ (MSBuild). macOS: Rosetta 2 (Apple Silicon), tar, curl. |
+| lichii | `git -C cores/lichii submodule update --init --recursive --depth 1` (nested submodules fetched only when this core is built). Then out-of-tree `cmake -S cores/lichii -B bin/.build/lichii -G Ninja` with Qt 6 and no tests or room server, `cmake --build` → `<build>/bin` copied to `bin/lichii`. Executable: `bin/lichii/lichii.app/Contents/MacOS/lichii` on macOS, `lichii` on Linux (its `libnxformat.so` and `nx2_switches.txt` are copied beside it), `lichii.exe` plus DLLs on Windows. Skipped when a tool is missing. | cmake, Ninja, Qt 6 (Widgets, Charts), glslangValidator (macOS/Linux), C/C++ compiler. Windows: VS 2022 and the Vulkan SDK. |
 | rpcs3 | Nested submodules fetched selectively: `git -C cores/rpcs3 submodule update --init --recursive --depth 1`, skipping LLVM, SDL, curl, zlib and feralinteractive on macOS/Linux (Windows fetches all). Then out-of-tree `cmake -S cores/rpcs3 -B bin/.build/rpcs3 -G Ninja` (macOS/Linux, system LLVM, system SDL3) or `-G "Visual Studio 17 2022" -A x64` with `BUILD_LLVM=ON` (Windows) → `cmake --build --target rpcs3` → `<build>/bin` copied to `bin/rpcs3`. Executable: `bin/rpcs3/rpcs3.app/Contents/MacOS/rpcs3` on macOS, `rpcs3` on Linux, `rpcs3.exe` on Windows. Upstream officially supports Windows and Linux; macOS is best-effort and untested here. | CMake 3.28+, Ninja (macOS/Linux), Qt 6.7+, SDL3, Vulkan, LLVM, Clang 19+ / GCC 13+. Windows: VS 2022 and the Vulkan SDK. |
 
 The script checks for each toolchain first. When one is missing it prints the exact install command
@@ -196,7 +198,7 @@ missing toolchain never fails the others.
   resolved path and its source, plus "Set path…", "Reset" and links to the homepage and license.
   The RPCS3 card also notes that PS3 firmware must be installed inside RPCS3.
 - **Running** panel: active sessions with a live log tail and Stop.
-- **Settings**: ROM folders, fullscreen on launch, GB/GBC core choice and theme.
+- **Settings**: ROM folders, fullscreen on launch, GB/GBC core choice, Switch core choice and theme.
 - Keyboard: `/` focuses search, Enter launches the selected game, and arrow keys move the grid
   selection. The UI follows the system light/dark theme.
 
@@ -232,4 +234,4 @@ missing toolchain never fails the others.
   (per-user, choosable folder, desktop and Start menu shortcuts) and a portable zip are built by
   `npm run dist:win`. Both are unsigned. Not yet run on a real Windows machine.
 - Not yet done: embedded play (phase 2), prebuilt core installer, real-emulator launch tests (none of
-  the six emulators, RPCS3 included, is installed on the dev machine), and a Windows hardware test.
+  the seven emulators, Lichii included, is installed on the dev machine), and a Windows hardware test.

@@ -33,7 +33,7 @@ export const state = {
   cores: [],
   games: [],
   folders: [],
-  settings: { fullscreen: false, gbCore: 'mgba', corePaths: {}, theme: 'system' },
+  settings: { fullscreen: false, gbCore: 'mgba', switchCore: 'ryujinx', corePaths: {}, theme: 'system' },
   sessions: new Map(),
   launching: new Set(),
 };
@@ -71,6 +71,7 @@ export const gameTitle = (id) => (gameById(id) || {}).title || 'Unknown game';
 
 export function coreIdForSystem(system) {
   if (system === 'gb' || system === 'gbc') return state.settings.gbCore === 'pyboy' ? 'pyboy' : 'mgba';
+  if (system === 'switch') return state.settings.switchCore === 'lichii' ? 'lichii' : 'ryujinx';
   return DEFAULT_CORE[system] || null;
 }
 export const coreForGame = (game) => coreById(coreIdForSystem(game.system));
@@ -316,7 +317,7 @@ export async function updateSettings(patch) {
   state.settings = { ...state.settings, ...patch };
   if ('theme' in patch) applyTheme();
   emit('settings');
-  if ('gbCore' in patch) emit('library');
+  if ('gbCore' in patch || 'switchCore' in patch) emit('library');
   try {
     const res = await api().setSettings(patch);
     if (res && typeof res === 'object') state.settings = { ...state.settings, ...res };
@@ -326,7 +327,7 @@ export async function updateSettings(patch) {
     applyTheme();
   }
   emit('settings');
-  if ('gbCore' in patch) emit('library');
+  if ('gbCore' in patch || 'switchCore' in patch) emit('library');
 }
 
 export async function openExternal(url) {

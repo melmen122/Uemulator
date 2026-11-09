@@ -5,7 +5,7 @@ const path = require('path');
 /** @type {ReadonlyArray<{id:string,name:string,extensions:string[],coreId:string,altCores:string[]}>} */
 const SYSTEMS = Object.freeze([
   { id: 'n64', name: 'Nintendo 64', extensions: ['.z64', '.n64', '.v64'], coreId: 'project64', altCores: [] },
-  { id: 'switch', name: 'Nintendo Switch', extensions: ['.nsp', '.xci', '.nca', '.nro'], coreId: 'ryujinx', altCores: [] },
+  { id: 'switch', name: 'Nintendo Switch', extensions: ['.nsp', '.xci', '.nca', '.nro'], coreId: 'ryujinx', altCores: ['lichii'] },
   // NOTE: ".app" is also the macOS bundle extension (a directory). Callers must only treat
   // regular files as ROMs (library.js enforces this); detectSystem only looks at the extension.
   { id: '3ds', name: 'Nintendo 3DS', extensions: ['.3ds', '.cci', '.cxi', '.cia', '.3dsx', '.app'], coreId: 'azahar', altCores: [] },
@@ -18,6 +18,7 @@ const SYSTEMS = Object.freeze([
 ].map((s) => Object.freeze(s)));
 
 const GB_CORES = Object.freeze(['mgba', 'pyboy']);
+const SWITCH_CORES = Object.freeze(['ryujinx', 'lichii']);
 
 const byExtension = new Map();
 for (const s of SYSTEMS) for (const ext of s.extensions) byExtension.set(ext, s.id);
@@ -58,7 +59,7 @@ function detectSystem(filePath) {
 }
 
 /**
- * Core that should run a system. gb/gbc honour settings.gbCore (mgba|pyboy).
+ * Core that should run a system. gb/gbc honour settings.gbCore (mgba|pyboy); switch honours settings.switchCore (ryujinx|lichii).
  * @returns {string|null}
  */
 function coreForSystem(systemId, settings) {
@@ -66,6 +67,9 @@ function coreForSystem(systemId, settings) {
   if (!sys) return null;
   if ((systemId === 'gb' || systemId === 'gbc') && settings && GB_CORES.includes(settings.gbCore)) {
     return settings.gbCore;
+  }
+  if (systemId === 'switch' && settings && SWITCH_CORES.includes(settings.switchCore)) {
+    return settings.switchCore;
   }
   return sys.coreId;
 }

@@ -2,7 +2,7 @@
 // Build emulator cores from the git submodules in cores/ into bin/<id>/.
 //   node scripts/build-cores.mjs [--check] [--jobs N] [coreId...]      (default: all cores)
 // Nothing under cores/ is edited by hand; out-of-tree build dirs live in bin/.build/ (gitignored).
-// Exception: azahar/project64/rpcs3 need their nested submodules initialised inside cores/<id>.
+// Exception: azahar/project64/rpcs3/lichii need their nested submodules initialised inside cores/<id>.
 // All processes are started with spawnSync(cmd, [args]) and no shell.
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -16,7 +16,7 @@ const CORES_DIR = path.join(ROOT, 'cores');
 const BIN_DIR = path.join(ROOT, 'bin');
 const BUILD_DIR = path.join(BIN_DIR, '.build');
 const PLATFORM = process.platform; // darwin | linux | win32
-const ALL_CORES = ['mgba', 'pyboy', 'project64', 'azahar', 'ryujinx', 'rpcs3'];
+const ALL_CORES = ['mgba', 'pyboy', 'project64', 'azahar', 'ryujinx', 'rpcs3', 'lichii'];
 
 // Wine runtime used to run the Windows Project64.exe on macOS (Project64 has no native macOS build).
 // Pinned like OmniTroid/neutron (BSD-3-Clause, https://github.com/OmniTroid/neutron, versions.env):
@@ -42,7 +42,7 @@ You still supply Project64.exe yourself (https://www.pj64-emu.com) and set its p
 On Windows it builds Project64 from source with MSBuild. On Linux, install wine from your package manager.
 
 Windows: building every core from source needs Visual Studio Build Tools, CMake, Qt, the Vulkan SDK and more.
-Most people should instead download the official Windows builds (mGBA, Azahar, Ryujinx, RPCS3, Project64) and
+Most people should instead download the official Windows builds (mGBA, Azahar, Ryujinx, RPCS3, Lichii, Project64) and
 point the launcher at each .exe on the Cores page. Run this script from a "Developer PowerShell for VS 2022".
 
 Options:
@@ -98,6 +98,13 @@ const HINTS = {
     darwin: 'brew install cmake ninja qt sdl3 llvm molten-vk vulkan-headers vulkan-loader   (RPCS3 only officially supports Windows/Linux builds; macOS is best-effort. Or install the prebuilt app from https://rpcs3.net and use Settings.)',
     linux: 'sudo apt install build-essential ninja-build cmake llvm-dev libasound2-dev libpulse-dev libopenal-dev libglew-dev zlib1g-dev libedit-dev libvulkan-dev libudev-dev libevdev-dev libsdl3-dev libjack-dev libsndio-dev libcurl4-openssl-dev qt6-base-dev qt6-base-private-dev qt6-multimedia-dev qt6-svg-dev libxkbcommon-dev   (needs GCC 13+/Clang 19+, Qt >= 6.7, SDL3; see cores/rpcs3/BUILDING.md)',
     win32: 'Install Visual Studio 2022 (Desktop development with C++), CMake 3.28+, Python 3, Qt 6 (set Qt6_ROOT, e.g. C:\\Qt\\6.x\\msvc2022_64) and the Vulkan SDK (sets VULKAN_SDK); see cores/rpcs3/BUILDING.md',
+  },
+  // Lichii (cores/lichii docs/Deps.md + .github/workflows/release-binaries.yml): CMake + Ninja, Qt 6 (incl. Charts), glslang,
+  // FFmpeg, SDL3 (bundled), Vulkan headers (bundled on macOS/Linux; the SDK on Windows).
+  lichiiLibs: {
+    darwin: 'brew install autoconf automake boost ffmpeg fmt glslang hidapi libtool libusb lz4 ninja nlohmann-json openssl pkg-config qt@6 sdl3 speexdsp zlib zstd cmake molten-vk vulkan-loader spirv-tools vulkan-utility-libraries',
+    linux: 'sudo apt install autoconf cmake g++ gcc git glslang-tools libglu1-mesa-dev libpulse-dev libtool libudev-dev libxkbcommon-x11-0 mesa-common-dev nasm ninja-build qt6-base-private-dev qt6-charts-dev qt6-tools-dev libavfilter-dev libavcodec-dev libswscale-dev pkg-config zlib1g-dev libva-dev libvdpau-dev spirv-tools spirv-headers libusb-1.0-0-dev libboost-dev libboost-fiber-dev libboost-context-dev libopus-dev libasound2-dev',
+    win32: 'Install Visual Studio 2022 (Desktop development with C++), CMake, Ninja, Qt 6.8 with Qt Charts (set Qt6_ROOT, e.g. C:\\Qt\\6.8.3\\msvc2022_64) and the Vulkan SDK (sets VULKAN_SDK); see cores/lichii/docs/Build.md. Or download the official build from https://github.com/zortos293/Lichii/releases and use Settings.',
   },
   ninja: { darwin: 'brew install ninja', linux: 'sudo apt install ninja-build', win32: 'winget install Ninja-build.Ninja   (optional on Windows)' },
 };
@@ -616,6 +623,101 @@ const CORES = {
         ? (fs.existsSync(macExe) ? macExe : null)
         : findFirst(out, (e) => !e.isDirectory() && e.name === `rpcs3${exeSuffix}`);
       return found ? { ok: true, note: path.relative(ROOT, found) } : { ok: false, note: 'built, but no rpcs3 executable found in output' };
+    },
+  },
+
+  lichii: {
+    platforms: ['darwin', 'linux', 'win32'],
+    check() {
+      const missing = [];
+      if (!exists('git')) missing.push({ tool: 'git', hint: hint('git') });
+      if (!exists('cmake')) missing.push({ tool: 'cmake (+ Qt 6, FFmpeg, glslang, Vulkan)', hint: hint('lichiiLibs') });
+      if (!exists('ninja')) missing.push({ tool: 'ninja', hint: hint('ninja') });
+      if (!hasQt6()) missing.push({ tool: 'Qt 6 (Widgets, Charts)', hint: hint('lichiiLibs') });
+      if (PLATFORM === 'win32') {
+        if (!findMsbuild()) missing.push({ tool: 'Visual Studio 2022 (C++ workload)', hint: hint('compiler') });
+        if (!process.env.VULKAN_SDK) missing.push({ tool: 'Vulkan SDK (VULKAN_SDK env var)', hint: hint('lichiiLibs') });
+      } else {
+        if (!hasCCompiler()) missing.push({ tool: 'C/C++ compiler', hint: hint('compiler') });
+        if (!exists('glslangValidator', ['--version'])) missing.push({ tool: 'glslang (glslangValidator)', hint: hint('lichiiLibs') });
+      }
+      return missing;
+    },
+    build({ jobs }) {
+      const src = path.join(CORES_DIR, 'lichii');
+      const build = path.join(BUILD_DIR, 'lichii');
+      const out = path.join(BIN_DIR, 'lichii');
+      // Nested submodules are only fetched when Lichii is actually built (plan.md §1); a repo without any is fine.
+      const wanted = nestedSubmodulePaths('lichii');
+      if (wanted.length > 0 && !run('git', ['-C', src, 'submodule', 'update', '--init', '--recursive', '--depth', '1'])) {
+        return { ok: false, note: 'could not fetch nested submodules' };
+      }
+      fs.mkdirSync(build, { recursive: true });
+      // Flags mirror cores/lichii/.github/workflows/release-binaries.yml (no tests, no room server, no
+      // Discord, system Qt), configured out-of-tree. CPM downloads the remaining dependencies at configure time.
+      const cfg = ['-S', src, '-B', build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release', '-DBUILD_TESTING=OFF',
+        '-DYUZU_TESTS=OFF', '-DYUZU_CMD=ON', '-DYUZU_ROOM=OFF', '-DYUZU_ROOM_STANDALONE=OFF',
+        '-DYUZU_USE_BUNDLED_QT=OFF', '-DUSE_DISCORD_PRESENCE=OFF', '-DENABLE_UPDATE_CHECKER=OFF'];
+      if (PLATFORM === 'win32') {
+        cfg.push('-DYUZU_USE_BUNDLED_SDL3=ON');
+        if (process.env.Qt6_ROOT) cfg.push(`-DCMAKE_PREFIX_PATH=${process.env.Qt6_ROOT}`);
+      } else {
+        cfg.push('-DVulkanHeaders_FORCE_BUNDLED=ON', '-DVulkanUtilityLibraries_FORCE_BUNDLED=ON');
+        if (PLATFORM === 'darwin') {
+          const prefixes = ['qt@6', 'zlib'].map((f) => capture('brew', ['--prefix', '--installed', f])).filter(Boolean);
+          const ssl = capture('brew', ['--prefix', '--installed', 'openssl@3']);
+          if (ssl) cfg.push(`-DOPENSSL_ROOT_DIR=${ssl}`);
+          if (prefixes.length > 0) cfg.push(`-DCMAKE_PREFIX_PATH=${prefixes.join(';')}`);
+        } else {
+          cfg.push('-DYUZU_USE_BUNDLED_SDL3=ON');
+          if (process.env.Qt6_ROOT) cfg.push(`-DCMAKE_PREFIX_PATH=${process.env.Qt6_ROOT}`);
+        }
+      }
+      if (!run('cmake', cfg)) return { ok: false, note: `configure failed. Needed libraries: ${hint('lichiiLibs')}` };
+      if (!run('cmake', ['--build', build, '--config', 'Release', '--target', 'yuzu', '--parallel', String(jobs)])) {
+        return { ok: false, note: 'build failed' };
+      }
+      // The yuzu target is named lichii and lands in <build>/bin (lichii.app on macOS).
+      const produced = path.join(build, 'bin');
+      cleanDir(out);
+      if (PLATFORM === 'darwin') {
+        const app = path.join(produced, 'lichii.app');
+        if (!fs.existsSync(app)) return { ok: false, note: `expected ${path.relative(ROOT, app)} not found` };
+        // ditto preserves the bundle (symlinks, xattrs); then bundle Qt and ad-hoc sign, as the upstream CI does.
+        const dest = path.join(out, 'lichii.app');
+        if (!run('ditto', [app, dest])) return { ok: false, note: 'could not copy lichii.app' };
+        const prefix = capture('brew', ['--prefix', '--installed', 'qt@6']);
+        const deploy = prefix ? path.join(prefix, 'bin', 'macdeployqt') : null;
+        if (deploy && fs.existsSync(deploy)) {
+          const brewPrefix = capture('brew', ['--prefix']);
+          const dargs = [dest, '-always-overwrite'];
+          if (brewPrefix) dargs.push(`-libpath=${path.join(brewPrefix, 'lib')}`);
+          if (!run(deploy, dargs)) console.log('  ! macdeployqt failed; the app may need Homebrew Qt at runtime');
+        }
+        if (!run('codesign', ['--force', '--deep', '--sign', '-', dest])) console.log('  ! ad-hoc codesign failed');
+        const exe = path.join(dest, 'Contents', 'MacOS', 'lichii');
+        return fs.existsSync(exe) ? { ok: true, note: path.relative(ROOT, exe) } : { ok: false, note: 'built, but no lichii executable found in output' };
+      }
+      const exe = path.join(produced, `lichii${exeSuffix}`);
+      if (!fs.existsSync(exe)) return { ok: false, note: `expected ${path.relative(ROOT, exe)} not found` };
+      if (PLATFORM === 'win32') {
+        // lichii.exe plus its DLLs (the whole bin folder), then bundle Qt like the upstream release.
+        copyTree(produced, out);
+        const outExe = path.join(out, 'lichii.exe');
+        if (exists('windeployqt', ['--version'])) {
+          if (!run('windeployqt', ['--release', '--no-translations', outExe])) console.log('  ! windeployqt failed; Qt DLLs may be missing');
+        } else {
+          console.log('  ! windeployqt not on PATH; add Qt\\bin to PATH (or run from a Qt prompt) to bundle the Qt DLLs');
+        }
+        return { ok: true, note: path.relative(ROOT, outExe) };
+      }
+      // Linux: lichii loads libnxformat.so and nx2_switches.txt from beside it (see upstream tar.gz packaging).
+      for (const f of ['lichii', 'nx2_switches.txt', 'libnxformat.so']) {
+        const from = path.join(produced, f);
+        if (fs.existsSync(from)) fs.copyFileSync(from, path.join(out, f));
+      }
+      fs.chmodSync(path.join(out, 'lichii'), 0o755);
+      return { ok: true, note: path.relative(ROOT, path.join(out, 'lichii')) };
     },
   },
 

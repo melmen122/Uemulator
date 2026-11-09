@@ -85,6 +85,7 @@ const EXPECT = {
   mgba: { built: 'C:\\app\\bin\\mgba\\bin\\mGBA.exe', sys: 'C:\\Program Files\\mGBA\\mGBA.exe' },
   azahar: { built: 'C:\\app\\bin\\azahar\\azahar.exe', sys: 'C:\\Program Files\\Azahar\\azahar.exe' },
   ryujinx: { built: 'C:\\app\\bin\\ryujinx\\Ryujinx.exe', sys: 'C:\\Program Files\\Ryujinx\\Ryujinx.exe' },
+  lichii: { built: 'C:\\app\\bin\\lichii\\lichii.exe', sys: 'C:\\Program Files\\Lichii\\lichii.exe' },
   rpcs3: { built: 'C:\\app\\bin\\rpcs3\\rpcs3.exe', sys: 'C:\\Program Files\\RPCS3\\rpcs3.exe' },
   project64: { built: 'C:\\app\\bin\\project64\\Project64.exe', sys: 'C:\\Program Files\\Project64 3.0\\Project64.exe' },
 };
@@ -597,7 +598,7 @@ test('taskkillPath falls back to C:\\Windows for relative, UNC, empty or unset S
 });
 
 // ---- 12. winpaths: no SystemDrive-root install guesses ----
-test('mgba/azahar/ryujinx/rpcs3/project64 win32 candidates never sit directly under the drive root', () => {
+test('mgba/azahar/ryujinx/lichii/rpcs3/project64 win32 candidates never sit directly under the drive root', () => {
   for (const id of Object.keys(EXPECT)) {
     const c = cores.getCore(id).candidates(ctx());
     assert.ok(!c.some((p) => /^C:\\[^\\]+\\[^\\]+$/.test(p) && !p.startsWith('C:\\Users')), `${id}: ${JSON.stringify(c)}`);
@@ -635,7 +636,7 @@ test('processes.start passes windowsHide: true only when asked, always shell: fa
 
 test('only the pyboy adapter asks for windowsHide (core.windowsHide flag)', () => {
   assert.equal(cores.getCore('pyboy').windowsHide, true);
-  for (const id of ['mgba', 'azahar', 'ryujinx', 'rpcs3', 'project64']) {
+  for (const id of ['mgba', 'azahar', 'ryujinx', 'lichii', 'rpcs3', 'project64']) {
     assert.notEqual(cores.getCore(id).windowsHide, true, id);
   }
 });

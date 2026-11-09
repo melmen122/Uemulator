@@ -6,6 +6,7 @@ const pyboy = require('../src/main/cores/pyboy');
 const project64 = require('../src/main/cores/project64');
 const azahar = require('../src/main/cores/azahar');
 const ryujinx = require('../src/main/cores/ryujinx');
+const lichii = require('../src/main/cores/lichii');
 
 const NASTY = [
   '/roms/My Game.gba',
@@ -17,14 +18,15 @@ const NASTY = [
 ];
 
 test('metadata', () => {
-  assert.deepEqual([mgba.id, pyboy.id, project64.id, azahar.id, ryujinx.id], ['mgba', 'pyboy', 'project64', 'azahar', 'ryujinx']);
+  assert.deepEqual([mgba.id, pyboy.id, project64.id, azahar.id, ryujinx.id, lichii.id], ['mgba', 'pyboy', 'project64', 'azahar', 'ryujinx', 'lichii']);
   assert.deepEqual(mgba.systems.sort(), ['gb', 'gba', 'gbc']);
   assert.deepEqual(pyboy.systems.sort(), ['gb', 'gbc']);
   assert.deepEqual(project64.systems, ['n64']);
   assert.ok(project64.platforms.includes('darwin') && project64.platforms.includes('win32'));
   assert.deepEqual(azahar.systems, ['3ds']);
   assert.deepEqual(ryujinx.systems, ['switch']);
-  for (const c of [mgba, pyboy, azahar, ryujinx]) {
+  assert.deepEqual(lichii.systems, ['switch']);
+  for (const c of [mgba, pyboy, azahar, ryujinx, lichii]) {
     for (const p of ['darwin', 'win32', 'linux']) assert.ok(c.platforms.includes(p), `${c.id} ${p}`);
   }
 });
@@ -33,6 +35,7 @@ const generic = [
   ['mgba', mgba, '-f', '/usr/bin/mgba'],
   ['azahar', azahar, '-f', '/usr/bin/azahar'],
   ['ryujinx', ryujinx, '--fullscreen', '/usr/bin/Ryujinx'],
+  ['lichii', lichii, '-f', '/usr/bin/lichii'],
 ];
 
 for (const [name, core, flag, exe] of generic) {
@@ -124,7 +127,7 @@ test('project64: WINEPREFIX omitted without prefixDir; bad wine/prefix rejected'
 });
 
 test('other adapters return no env', () => {
-  for (const [core, exe] of [[mgba, '/usr/bin/mgba'], [azahar, '/usr/bin/azahar'], [ryujinx, '/usr/bin/Ryujinx'], [pyboy, '/usr/bin/pyboy']]) {
+  for (const [core, exe] of [[mgba, '/usr/bin/mgba'], [azahar, '/usr/bin/azahar'], [ryujinx, '/usr/bin/Ryujinx'], [lichii, '/usr/bin/lichii'], [pyboy, '/usr/bin/pyboy']]) {
     const r = core.buildArgs('/r/x', { exe });
     assert.ok(r.env === undefined || Object.keys(r.env).length === 0, core.id);
   }
@@ -143,7 +146,7 @@ test('project64: win32 runs exe directly; fullscreen ignored', () => {
 
 test('candidates return absolute-ish strings and honor binDir first', () => {
   const ctx = { platform: 'darwin', binDir: '/app/bin', homedir: '/Users/u', env: {} };
-  for (const c of [mgba, pyboy, azahar, ryujinx]) {
+  for (const c of [mgba, pyboy, azahar, ryujinx, lichii]) {
     const list = c.candidates(ctx);
     assert.ok(list.length > 0, c.id);
     assert.ok(list.every((p) => typeof p === 'string' && p.startsWith('/')), c.id);

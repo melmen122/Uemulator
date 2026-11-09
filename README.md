@@ -1,6 +1,6 @@
 # Uemulator
 
-A desktop launcher (Node + Electron) that puts six emulators behind one game library. You add ROM
+A desktop launcher (Node + Electron) that puts seven emulators behind one game library. You add ROM
 folders, Uemulator detects each game's system, and Play starts the matching emulator as a child
 process with live logs and a Stop button. Each emulator is an unmodified git submodule under
 `cores/<id>`; Uemulator only finds and launches them.
@@ -12,7 +12,7 @@ Uemulator runs on macOS, Linux and Windows x64. See [Windows](#windows) for the 
 | System | Extensions | Core | Upstream | License |
 |---|---|---|---|---|
 | Nintendo 64 | `.z64` `.n64` `.v64` | Project64 (Windows native; macOS and Linux via Wine) | https://github.com/project64/project64 | GPL-2.0 |
-| Nintendo Switch | `.nsp` `.xci` `.nca` `.nro` | Ryujinx (Ryubing) | https://git.ryujinx.app/ryubing/ryujinx | MIT |
+| Nintendo Switch | `.nsp` `.xci` `.nca` `.nro` | Ryujinx (Ryubing, default) or Lichii (very experimental) | https://git.ryujinx.app/ryubing/ryujinx, https://github.com/zortos293/Lichii | MIT, GPL-3.0-or-later |
 | Nintendo 3DS | `.3ds` `.cci` `.cxi` `.cia` `.3dsx` `.app` | Azahar | https://github.com/azahar-emu/azahar | GPL-2.0 |
 | Game Boy Advance | `.gba` | mGBA | https://github.com/mgba-emu/mgba | MPL-2.0 |
 | Game Boy | `.gb` | mGBA (default) or PyBoy | https://github.com/mgba-emu/mgba, https://github.com/Baekalfen/PyBoy | MPL-2.0, LGPL-3.0 |
@@ -20,7 +20,18 @@ Uemulator runs on macOS, Linux and Windows x64. See [Windows](#windows) for the 
 | PlayStation 3 | `.iso`, `EBOOT.BIN` (inside `USRDIR`) | RPCS3 | https://github.com/rpcs3/rpcs3 | GPL-2.0 |
 
 Ryujinx moved off GitHub. Use the `git.ryujinx.app` URL above; the GitHub Ryubing org has no
-emulator repository. The GB/GBC core is chosen in Settings. Extension matching is case-insensitive.
+emulator repository. The GB/GBC core is chosen in Settings, and so is the Switch core (Ryujinx or
+Lichii). Extension matching is case-insensitive.
+
+### Nintendo Switch cores
+
+- Ryujinx is the default. Settings > Switch core > Lichii makes Lichii launch Switch games instead.
+- Lichii describes itself as a Switch and Switch 2 emulator. Uemulator only matches Switch files by
+  extension (`.nsp`, `.xci`, `.nca`, `.nro`) and does not detect the console generation; the Switch core
+  setting decides which core runs. Which Switch 2 dump formats Lichii accepts is up to Lichii, not verified here.
+- Lichii is launched with `-g <game>`, plus `-f` when fullscreen is on.
+- Both Switch cores need keys and firmware that you obtain legally yourself. Uemulator does not
+  supply them.
 
 ### PlayStation 3 library rules
 
@@ -92,6 +103,7 @@ skip that core. Real build failures exit with code 1.
 | `azahar` | `bin/azahar/` | `git`, `cmake`. Qt 6, SDL2 and a C++20 compiler are needed (the script only checks `cmake`). |
 | `ryujinx` | `bin/ryujinx/` | .NET SDK 10 or newer. The version comes from `cores/ryujinx/global.json`. |
 | `project64` | `bin/project64/` (Windows), `bin/wine/` (macOS) | Windows: `git`, MSBuild (Visual Studio 2019 or newer). macOS: Rosetta 2 on Apple Silicon, `tar`, `curl`. Linux: not built here. Install `wine` from your package manager. |
+| `lichii` | `bin/lichii/` | `git`, `cmake`, `ninja`, Qt 6 (Widgets, Charts), a C/C++ compiler. macOS and Linux also need `glslangValidator`. Windows needs Visual Studio 2022 (C++ workload) and the Vulkan SDK (`VULKAN_SDK`). The script skips Lichii when a tool is missing. |
 | `rpcs3` | `bin/rpcs3/` | `git`, `cmake` 3.28+, Qt 6.7+ (Widgets, Multimedia, Svg), SDL3, Vulkan, LLVM (system LLVM on macOS/Linux; built from the submodule on Windows), Clang 19+ or GCC 13+. Windows needs Visual Studio 2022 and the Vulkan SDK (`VULKAN_SDK`). `ninja` is needed on macOS and Linux. Upstream officially supports Windows and Linux. The macOS path is best-effort and has not been run here. |
 
 The script prints the install command for each missing tool (for example `brew install cmake qt
@@ -168,6 +180,7 @@ Official Windows downloads:
 | mGBA | GBA, GB, GBC | https://mgba.io | `mGBA.exe` |
 | Azahar | 3DS | https://azahar-emu.org | `azahar.exe` |
 | Ryujinx (Ryubing) | Switch | https://ryujinx.app | `Ryujinx.exe` |
+| Lichii (experimental) | Switch, Switch 2 | https://github.com/zortos293/Lichii/releases | `lichii.exe` (folder with its Qt DLLs; choose the exe inside) |
 | RPCS3 | PS3 | https://rpcs3.net | `rpcs3.exe` (portable build, extract anywhere) |
 | Project64 3.x | N64 | https://www.pj64-emu.com | `Project64.exe`. Install to `C:\Program Files (x86)\Project64 3.0`, or use the zip. |
 | PyBoy | GB, GBC (optional) | `npm run build:cores -- pyboy` | `bin\pyboy\venv\Scripts\python.exe`, or `pyboy.exe` on PATH |
@@ -291,7 +304,7 @@ plan.md          architecture and contracts
 - No embedded play. Games run in the emulator's own window, outside Uemulator.
 - Cores are launched as external windows. Uemulator tracks the process and its logs only.
 - No prebuilt core installer. Cores must be built locally or installed by hand.
-- Build paths for cmake, .NET and RPCS3 are untested on the development machine. None of the six
+- Build paths for cmake, .NET and RPCS3 are untested on the development machine. None of the seven
   emulators is installed there, so real-emulator launches are untested.
 - The Windows x64 build has not been run on a real Windows machine. Installer, auto-detect, Stop and
   Project64 are all unverified there. See [Windows](#windows).

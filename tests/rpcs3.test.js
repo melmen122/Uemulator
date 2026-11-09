@@ -129,9 +129,9 @@ test('rpcs3 candidates: built bin/rpcs3 first on every platform', () => {
 });
 
 // ---- registry / resolution ----
-test('registry lists six cores including rpcs3', () => {
-  assert.equal(cores.CORES.length, 6);
-  assert.deepEqual(cores.listCores().map((c) => c.id).sort(), ['azahar', 'mgba', 'project64', 'pyboy', 'rpcs3', 'ryujinx']);
+test('registry lists seven cores including rpcs3', () => {
+  assert.equal(cores.CORES.length, 7);
+  assert.deepEqual(cores.listCores().map((c) => c.id).sort(), ['azahar', 'lichii', 'mgba', 'project64', 'pyboy', 'rpcs3', 'ryujinx']);
   assert.equal(cores.getCore('rpcs3'), rpcs3);
   assert.equal(cores.describeCore(rpcs3, {}, { existsSync: () => false, platform: 'linux', which: () => null, binDir: '/n', homedir: '/h', env: {} }).license, 'GPL-2.0');
 });

@@ -70,6 +70,8 @@ export function createCoresView() {
         ? h('p', { class: 'core-detail' }, core.detail.trim()) : null,
       core.id === 'rpcs3'
         ? h('p', { class: 'core-note' }, 'RPCS3 needs PS3 firmware (PS3UPDAT.PUP) installed inside RPCS3 itself before games will boot.') : null,
+      core.id === 'lichii'
+        ? h('p', { class: 'core-note' }, 'Lichii is a very experimental Switch / Switch 2 emulator built from source. Supply your own legally obtained keys and firmware. Select it as the Switch core in Settings.') : null,
       h('div', { class: 'core-actions' },
         h('button', { type: 'button', class: 'btn btn-primary btn-sm', onClick: () => pickCorePath(core.id) }, icon('folder', 15), 'Set path…'),
         h('button', { type: 'button', class: 'btn btn-sm', 'aria-disabled': overridden ? null : 'true', title: overridden ? 'Go back to automatic detection' : 'Already using automatic detection',

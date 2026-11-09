@@ -1,7 +1,7 @@
 {
   "name": "uemulator",
   "version": "0.1.0",
-  "description": "One desktop library and launcher for mGBA, PyBoy, Project64, Azahar and Ryujinx.",
+  "description": "One desktop library and launcher for mGBA, PyBoy, Project64, Azahar, Ryujinx, RPCS3 and Lichii.",
   "private": true,
   "main": "src/main/main.js",
   "license": "UNLICENSED",

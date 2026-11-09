@@ -9,12 +9,13 @@ const { detectSystem } = require('./systems');
 const FILE_NAME = 'uemulator.json';
 const THEMES = Object.freeze(['system', 'light', 'dark']);
 const GB_CORE_IDS = Object.freeze(['mgba', 'pyboy']);
+const SWITCH_CORE_IDS = Object.freeze(['ryujinx', 'lichii']);
 const MAX_PATH_LEN = 4096;
 
 function defaultSettings() {
   const corePaths = {};
   for (const c of CORES) corePaths[c.id] = null;
-  return { fullscreen: false, gbCore: 'mgba', corePaths, theme: 'system' };
+  return { fullscreen: false, gbCore: 'mgba', switchCore: 'ryujinx', corePaths, theme: 'system' };
 }
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -36,6 +37,10 @@ function validateSettingsPatch(patch) {
       case 'gbCore':
         if (!GB_CORE_IDS.includes(value)) throw new Error('Setting "gbCore" must be "mgba" or "pyboy"');
         out.gbCore = value;
+        break;
+      case 'switchCore':
+        if (!SWITCH_CORE_IDS.includes(value)) throw new Error('Setting "switchCore" must be "ryujinx" or "lichii"');
+        out.switchCore = value;
         break;
       case 'theme':
         if (!THEMES.includes(value)) throw new Error('Setting "theme" must be "system", "light" or "dark"');

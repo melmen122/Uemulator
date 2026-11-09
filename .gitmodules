@@ -22,3 +22,8 @@
 	path = cores/rpcs3
 	url = https://github.com/rpcs3/rpcs3.git
 	shallow = true
+[submodule "cores/lichii"]
+	path = cores/lichii
+	url = https://github.com/zortos293/Lichii.git
+	branch = nx2
+	shallow = true
