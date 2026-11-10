@@ -206,7 +206,13 @@ test('store: old settings file containing switchCore loads with the key dropped'
 
 // ---- IPC ----
 const NSP = '/g/game.nsp';
-function harness(settings, system = 'switch') {
+function harness(settings, system = 'switch', { keys = true } = {}) {
+  // Fake home (+ prod.keys unless keys:false) so the Lichii keys preflight never touches the real home dir.
+  if (keys) {
+    const kd = path.join(dir, '.local', 'share', 'eden', 'keys');
+    fs.mkdirSync(kd, { recursive: true });
+    fs.writeFileSync(path.join(kd, 'prod.keys'), 'master_key_00 = 00\n');
+  }
   const store = createStore({ dir });
   if (settings) store.setSettings(settings);
   store.setLibrary({ folders: [], games: [
@@ -218,7 +224,7 @@ function harness(settings, system = 'switch') {
     processes: { start: async (x) => { started.push(x); return { pid: 1, sessionId: 's' }; }, stop() {}, list: () => [] },
     dialog: {}, shell: {}, getWindow: () => null,
     fs: { ...fs, statSync: (p) => (p === NSP ? { isFile: () => true, isDirectory: () => false } : fs.statSync(p)) },
-    platform: 'linux',
+    platform: 'linux', homedir: dir, env: {},
     resolveDeps: { existsSync: (p) => p === '/my/lichii' || p === '/my/ryujinx', platform: 'linux', which: () => null, binDir: '/nobin', homedir: '/h', env: {} },
   });
   return { h, started };
@@ -284,4 +290,89 @@ test('build-cores: "lichii --check" is accepted and never builds', () => {
   assert.match(r.stdout, /== lichii ==/);
   assert.match(r.stdout, /^lichii\s+(unsupported|skipped|ready)\b/m);
   assert.doesNotMatch(r.stdout, /^lichii\s+(built|failed)\b/m);
+});
+
+// ---- keys preflight ----
+const KEY_MSG = /prod\.keys was not found/;
+const mkfile = (p, body) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, body); };
+const swGame = { system: 'switch', path: '/r/x.nsp' };
+
+test('lichii keysDirs: linux/darwin use XDG_DATA_HOME or ~/.local/share; win32 uses APPDATA', () => {
+  assert.deepEqual(lichii.keysDirs({ platform: 'linux', homedir: '/home/u', env: {} }), ['/home/u/.local/share/eden/keys']);
+  assert.deepEqual(lichii.keysDirs({ platform: 'darwin', homedir: '/Users/u', env: {} }), ['/Users/u/.local/share/eden/keys']);
+  assert.deepEqual(lichii.keysDirs({ platform: 'linux', homedir: '/home/u', env: { XDG_DATA_HOME: '/x/data' } }), ['/x/data/eden/keys']);
+  assert.deepEqual(lichii.keysDirs({ platform: 'win32', homedir: 'C:\\Users\\u', env: { APPDATA: 'D:\\Roam' } }), ['D:\\Roam\\eden\\keys']);
+  assert.deepEqual(lichii.keysDirs({ platform: 'win32', homedir: 'C:\\Users\\u', env: {} }), ['C:\\Users\\u\\AppData\\Roaming\\eden\\keys']);
+});
+
+test('lichii preflight: missing prod.keys -> message naming the expected dir', () => {
+  for (const platform of ['linux', 'darwin']) {
+    const msg = lichii.preflight(swGame, { platform, homedir: dir, env: {}, exe: '/nope/lichii', fs });
+    assert.match(msg, KEY_MSG);
+    assert.ok(msg.includes(path.join(dir, '.local', 'share', 'eden', 'keys')));
+    assert.match(msg, /NCA file has a bad header/);
+  }
+});
+
+test('lichii preflight: non-empty prod.keys passes; empty prod.keys fails', () => {
+  const kf = path.join(dir, '.local', 'share', 'eden', 'keys', 'prod.keys');
+  mkfile(kf, '');
+  assert.match(lichii.preflight(swGame, { platform: 'linux', homedir: dir, env: {}, exe: '/nope/lichii', fs }), KEY_MSG);
+  fs.writeFileSync(kf, 'master_key_00 = 00\n');
+  assert.equal(lichii.preflight(swGame, { platform: 'linux', homedir: dir, env: {}, exe: '/nope/lichii', fs }), null);
+});
+
+test('lichii preflight: a directory named prod.keys does not count', () => {
+  fs.mkdirSync(path.join(dir, '.local', 'share', 'eden', 'keys', 'prod.keys'), { recursive: true });
+  assert.match(lichii.preflight(swGame, { platform: 'linux', homedir: dir, env: {}, exe: '/nope/lichii', fs }), KEY_MSG);
+});
+
+test('lichii preflight: switch2 is not enforced; other systems ignored', () => {
+  const c = { platform: 'linux', homedir: dir, env: {}, exe: '/nope/lichii', fs };
+  assert.equal(lichii.preflight({ system: 'switch2', path: '/r/x.nup' }, c), null);
+  assert.equal(lichii.preflight({ system: 'gba' }, c), null);
+});
+
+test('lichii preflight: portable user/keys/prod.keys beside the exe passes', () => {
+  const exeDir = path.join(dir, 'app');
+  const exe = path.join(exeDir, 'lichii');
+  const c = { platform: 'linux', homedir: path.join(dir, 'home'), env: {}, exe, fs };
+  mkfile(exe, '');
+  fs.mkdirSync(path.join(exeDir, 'user'), { recursive: true });
+  assert.match(lichii.preflight(swGame, c), KEY_MSG);
+  mkfile(path.join(exeDir, 'user', 'keys', 'prod.keys'), 'k');
+  assert.equal(lichii.preflight(swGame, c), null);
+  assert.equal(lichii.keysDirs(c).length, 2);
+});
+
+test('lichii preflight: win32 uses APPDATA (fake fs; win32 paths are not real on this host)', () => {
+  const keys = 'D:\\Roam\\eden\\keys\\prod.keys';
+  const mkfs = (files) => ({
+    statSync(p) {
+      if (!(p in files)) throw new Error('ENOENT');
+      return { isFile: () => true, isDirectory: () => false, size: files[p] };
+    },
+  });
+  const c = { platform: 'win32', homedir: 'C:\\Users\\u', env: { APPDATA: 'D:\\Roam' }, exe: 'C:\\nope\\lichii.exe' };
+  const msg = lichii.preflight(swGame, { ...c, fs: mkfs({}) });
+  assert.match(msg, KEY_MSG);
+  assert.ok(msg.includes('D:\\Roam\\eden\\keys'));
+  assert.equal(lichii.preflight(swGame, { ...c, fs: mkfs({ [keys]: 5 }) }), null);
+  assert.match(lichii.preflight(swGame, { ...c, fs: mkfs({ [keys]: 0 }) }), KEY_MSG);
+});
+
+test('lichii preflight never throws (broken fs treated as not found)', () => {
+  const bad = { statSync() { throw new Error('boom'); } };
+  assert.match(lichii.preflight(swGame, { platform: 'linux', homedir: '/h', env: {}, exe: '/x/lichii', fs: bad }), KEY_MSG);
+});
+
+test('game:launch switch via lichii without keys is rejected before starting; ryujinx and switch2 unaffected', async () => {
+  const t = harness({ corePaths: PATHS }, 'switch', { keys: false });
+  await assert.rejects(t.h['game:launch']('bbbbbbbbbbbb'), KEY_MSG);
+  assert.equal(t.started.length, 0);
+  await t.h['game:launch']('bbbbbbbbbbbb', { coreId: 'ryujinx' });
+  assert.equal(t.started.length, 1);
+  const t2 = harness({ corePaths: PATHS }, 'switch2', { keys: false });
+  await t2.h['game:launch']('bbbbbbbbbbbb');
+  assert.equal(t2.started.length, 1);
 });

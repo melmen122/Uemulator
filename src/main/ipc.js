@@ -273,6 +273,13 @@ function createHandlers(ctx) {
           : `${core.name} is not installed. Set its path on the Cores page or run "npm run build:cores ${core.id}".`);
       }
 
+      if (typeof core.preflight === 'function') {
+        let home = ctx.homedir;
+        if (typeof home !== 'string') { try { home = nodeOs.homedir(); } catch { home = ''; } }
+        const problem = core.preflight(game, { platform, homedir: home, env: ctx.env || process.env, exe: r.exe, fs });
+        if (problem) throw new Error(problem);
+      }
+
       const buildOpts = { exe: r.exe, fullscreen: !!settings.fullscreen, platform };
       if (core.wine && platform !== 'win32') {
         // Wine-run core: the binary comes from resolution; the prefix lives under the app's userData dir.
