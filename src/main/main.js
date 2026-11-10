@@ -3,6 +3,7 @@ const path = require('path');
 const { app, BrowserWindow, ipcMain, dialog, shell, session, Menu } = require('electron');
 const { createStore } = require('./store');
 const { createProcessManager } = require('./processes');
+const { bundledBinDir } = require('./bundled');
 const { registerIpc, RENDERER_INDEX_URL } = require('./ipc');
 
 // Keep in sync with the <meta> CSP in the renderer's index.html.
@@ -93,8 +94,8 @@ if (!app.requestSingleInstanceLock()) {
       shell,
       getWindow: () => mainWindow || undefined,
       userDataDir: app.getPath('userData'),
-      // binDir is only populated in dev (inside app.asar when packaged); userDataDir hosts the wine runtime link.
-      resolveDeps: { binDir: path.join(app.getAppPath(), 'bin'), userDataDir: app.getPath('userData') },
+      // binDir: <resources>/emulators when packaged (Windows bundle, see scripts/bundle-win.mjs), <app>/bin in dev; userDataDir hosts the wine runtime link.
+      resolveDeps: { binDir: bundledBinDir({ isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() }), userDataDir: app.getPath('userData') },
     });
     createWindow();
     app.on('activate', () => {

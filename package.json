@@ -10,7 +10,8 @@
     "test": "node --test \"tests/**/*.test.js\"",
     "build:cores": "node scripts/build-cores.mjs",
     "dist": "electron-builder",
-    "dist:win": "electron-builder --win nsis zip --x64"
+    "bundle:win": "node scripts/bundle-win.mjs",
+    "dist:win": "npm run bundle:win && electron-builder --win nsis zip --x64"
   },
   "devDependencies": {
     "electron": "^45.1.0",
@@ -23,7 +24,8 @@
       "src/**",
       "package.json",
       "!cores/**",
-      "!bin/**"
+      "!bin/**",
+      "!bundle-win/**"
     ],
     "mac": {
       "category": "public.app-category.games"
@@ -46,7 +48,16 @@
           ]
         }
       ],
-      "artifactName": "${productName}-${version}-win-${arch}.${ext}"
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}",
+      "extraResources": [
+        {
+          "from": "bundle-win/emulators",
+          "to": "emulators",
+          "filter": [
+            "**/*"
+          ]
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,
