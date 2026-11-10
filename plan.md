@@ -6,7 +6,7 @@ game library, launcher and settings UI.
 | System | Core | Upstream | Language / build | License |
 |---|---|---|---|---|
 | Nintendo 64 | Project64 | github.com/project64/project64 | C++ / MSBuild (Windows); macOS and Linux run the exe via Wine | GPL-2.0 |
-| Nintendo Switch / Switch 2 | Switch: Ryujinx (Ryubing); Switch 2: Lichii (Lichii also lists Switch, but Switch defaults to Ryujinx) | git.ryujinx.app/ryubing/ryujinx (moved off GitHub); github.com/zortos293/Lichii (branch `nx2`) | C# / .NET SDK 10.0.301 (`cores/ryujinx/global.json`); Lichii: C++ / CMake + Ninja, Qt 6 | MIT; Lichii GPL-3.0-or-later |
+| Nintendo Switch / Switch 2 | Switch: Lichii (default), Ryujinx (Ryubing) as alternate; Switch 2: Lichii | git.ryujinx.app/ryubing/ryujinx (moved off GitHub); github.com/zortos293/Lichii (branch `nx2`) | C# / .NET SDK 10.0.301 (`cores/ryujinx/global.json`); Lichii: C++ / CMake + Ninja, Qt 6 | MIT; Lichii GPL-3.0-or-later |
 | Nintendo 3DS | Azahar | github.com/azahar-emu/azahar | C++ / CMake + Qt6 | GPL-2.0 |
 | Game Boy / Color | PyBoy | github.com/Baekalfen/PyBoy | Python (+Cython) / pip | LGPL-3.0 |
 | GBA / GB / GBC | mGBA | github.com/mgba-emu/mgba | C / CMake | MPL-2.0 |
@@ -29,7 +29,8 @@ separation. So the plan is:
   logs to the UI.
 - **Executable resolution order** for every core:
   1. a user override path in Settings
-  2. a locally built binary in `bin/<id>/` (from `npm run build:cores`)
+  2. a locally built binary in `bin/<id>/` (from `npm run build:cores`). In a packaged Windows app this is
+     `<resources>\emulators\<id>\`, filled from `bundle-win/` by `npm run bundle:win` (lichii, mgba, azahar, rpcs3)
   3. well-known system install locations (e.g. `/Applications/mGBA.app`, Homebrew, `PATH`)
 - **Platform reality**: Project64 has no native macOS or Linux build. On macOS/Linux its adapter runs
   the user-supplied `Project64.exe` through a Wine binary (`bin/wine/` on macOS, then the app-data link,
@@ -53,13 +54,15 @@ separation. So the plan is:
 Uemulator/
   plan.md                     this file
   README.md
-  package.json                electron, electron-builder; scripts: start, test, build:cores, dist
+  package.json                electron, electron-builder; scripts: start, test, build:cores, bundle:win, dist, dist:win
   .gitmodules                 cores/* (shallow)
   cores/                      upstream submodules (never edited)
     mgba/ pyboy/ project64/ azahar/ ryujinx/ rpcs3/ lichii/
   bin/                        build output per core (gitignored)
+  bundle-win/                 Windows x64 emulator bundle staging (gitignored; cache/ and emulators/)
   scripts/
     build-cores.mjs           `node scripts/build-cores.mjs [coreId...]` (per-core build + toolchain checks)
+    bundle-win.mjs            `npm run bundle:win`: pinned, SHA-256-checked Windows builds into bundle-win/emulators/
   src/
     main/
       main.js                 app lifecycle, BrowserWindow (hardened), IPC registration
@@ -86,7 +89,7 @@ Uemulator/
 | id | name | extensions | default core |
 |---|---|---|---|
 | `n64` | Nintendo 64 | .z64 .n64 .v64 | project64 |
-| `switch` | Nintendo Switch | .nsp .xci .nca .nro | ryujinx (alt: lichii) |
+| `switch` | Nintendo Switch | .nsp .xci .nca .nro | lichii (alt: ryujinx) |
 | `switch2` | Nintendo Switch 2 | none (assigned by the library scan from the title ID, see `switch2.js`) | lichii |
 | `3ds` | Nintendo 3DS | .3ds .cci .cxi .cia .3dsx .app | azahar |
 | `gba` | Game Boy Advance | .gba | mgba |
@@ -239,6 +242,8 @@ missing toolchain never fails the others.
 - Windows x64 support added: `win32` adapter paths (`cores/winpaths.js`), `.exe`-only core paths,
   taskkill stop, `window.uemu.platform`, and `%APPDATA%\uemulator\` data. The NSIS installer
   (per-user, choosable folder, desktop and Start menu shortcuts) and a portable zip are built by
-  `npm run dist:win`. Both are unsigned. Not yet run on a real Windows machine.
+  `npm run dist:win`. Both are unsigned. Not yet run on a real Windows machine. `dist:win` first runs
+  `bundle:win`, so the app ships official x64 builds of lichii, mgba, azahar and rpcs3 in
+  `resources\emulators\`. That bundled set has not been run on Windows either.
 - Not yet done: embedded play (phase 2), prebuilt core installer, real-emulator launch tests (none of
   the seven emulators, Lichii included, is installed on the dev machine), and a Windows hardware test.

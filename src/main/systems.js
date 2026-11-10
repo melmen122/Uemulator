@@ -5,7 +5,7 @@ const path = require('path');
 /** @type {ReadonlyArray<{id:string,name:string,extensions:string[],coreId:string,altCores:string[]}>} */
 const SYSTEMS = Object.freeze([
   { id: 'n64', name: 'Nintendo 64', extensions: ['.z64', '.n64', '.v64'], coreId: 'project64', altCores: [] },
-  { id: 'switch', name: 'Nintendo Switch', extensions: ['.nsp', '.xci', '.nca', '.nro'], coreId: 'ryujinx', altCores: ['lichii'] },
+  { id: 'switch', name: 'Nintendo Switch', extensions: ['.nsp', '.xci', '.nca', '.nro'], coreId: 'lichii', altCores: ['ryujinx'] },
   // Switch 2 shares .nsp/.xci with 'switch': the library scanner moves those here by title ID (see switch2.js).
   // .nup is Lichii's own package format (only Lichii opens it), so it always belongs here, whatever its title ID.
   { id: 'switch2', name: 'Nintendo Switch 2', extensions: ['.nup'], coreId: 'lichii', altCores: [] },
@@ -62,7 +62,7 @@ function detectSystem(filePath) {
 
 /**
  * Core that should run a system. gb/gbc honour settings.gbCore (mgba|pyboy); every other system uses its table default
- * (switch -> ryujinx, switch2 -> lichii).
+ * (switch -> lichii, switch2 -> lichii).
  * @returns {string|null}
  */
 function coreForSystem(systemId, settings) {

@@ -12,7 +12,7 @@ Uemulator runs on macOS, Linux and Windows x64. See [Windows](#windows) for the 
 | System | Extensions | Core | Upstream | License |
 |---|---|---|---|---|
 | Nintendo 64 | `.z64` `.n64` `.v64` | Project64 (Windows native; macOS and Linux via Wine) | https://github.com/project64/project64 | GPL-2.0 |
-| Nintendo Switch | `.nsp` `.xci` `.nca` `.nro` | Ryujinx (Ryubing) | https://git.ryujinx.app/ryubing/ryujinx | MIT |
+| Nintendo Switch | `.nsp` `.xci` `.nca` `.nro` | Lichii (experimental, default); Ryujinx (Ryubing) as alternate | https://github.com/zortos293/Lichii, https://git.ryujinx.app/ryubing/ryujinx | GPL-3.0-or-later, MIT |
 | Nintendo Switch 2 | Same files as Switch, classified by title ID | Lichii (very experimental) | https://github.com/zortos293/Lichii | GPL-3.0-or-later |
 | Nintendo 3DS | `.3ds` `.cci` `.cxi` `.cia` `.3dsx` `.app` | Azahar | https://github.com/azahar-emu/azahar | GPL-2.0 |
 | Game Boy Advance | `.gba` | mGBA | https://github.com/mgba-emu/mgba | MPL-2.0 |
@@ -26,7 +26,8 @@ Extension matching is case-insensitive.
 
 ### Nintendo Switch and Switch 2
 
-- Switch 1 games run in Ryujinx. Switch 2 games run in Lichii.
+- Switch 1 and Switch 2 games run in Lichii by default. Ryujinx is registered as an alternate core for
+  Switch 1, but no control in the app selects it, so Play always starts Switch 1 games in Lichii.
 - Switch and Switch 2 are separate systems in the library, each with its own tab and badge.
 - Files are matched by extension (`.nsp`, `.xci`, `.nca`, `.nro`). A file is listed as Switch 2 only
   when its title ID starts with `04`. A title ID starting with `01` is Switch 1.
@@ -36,11 +37,11 @@ Extension matching is case-insensitive.
   - `.xci`, `.nca`, `.nro`: name and folder only. Their title IDs cannot be read without keys.
   - So an `.nsp` without a ticket, or any `.xci`, is detected as Switch 2 only when its file or folder
     name contains the bracketed title ID, for example `Game [0400…].xci`.
-- Anything not recognised is treated as Switch 1 and launches in Ryujinx.
+- Anything not recognised is treated as Switch 1 and launches in Lichii.
 - The `04` rule comes from observed Switch 2 title IDs, not from a specification. A wrong guess can
   put a game under the wrong system or the wrong core.
-- Lichii is also registered for Switch 1, but Play always uses the default core for the system, so
-  Switch 1 games launch in Ryujinx.
+- Play always uses the default core for the system (`switch`: Lichii). The launch IPC accepts a core
+  override, but the app's UI does not offer one for Switch.
 - Lichii is launched with `-g <game>`, plus `-f` when fullscreen is on.
 - Both cores need keys and firmware that you obtain legally yourself. Uemulator does not supply them.
 
@@ -141,6 +142,7 @@ Uemulator downloads the Gcenx build itself. It does not use neutron's Steam brid
 
 Uemulator runs on Windows x64. Project64 runs natively there, so no Wine is needed. The Windows
 build has not been run on a real Windows machine yet. Treat it as untested until you have checked it.
+The bundled emulators (see [Bundled emulators](#bundled-emulators)) have not been run on Windows either.
 
 ### Install
 
@@ -174,8 +176,8 @@ Library page. Windows folder rules:
 
 Auto-detect looks in these places, in this order:
 
-1. `bin\<id>\` in the repo, built by `npm run build:cores`. A packaged app does not look here, only
-   `npm start` does.
+1. The bundled emulators. In the installed app this is `<install folder>\resources\emulators\<id>\`.
+   With `npm start` it is `bin\<id>\` in the repo, built by `npm run build:cores`.
 2. `Program Files`, `Program Files (x86)` and `ProgramW6432`.
 3. `%LOCALAPPDATA%\Programs`, then `%LOCALAPPDATA%`.
 4. Your home folder and the drive root, one folder deep, for example `C:\mGBA\mGBA.exe`.
@@ -184,7 +186,41 @@ Auto-detect looks in these places, in this order:
 If auto-detect misses a core, open **Cores**, choose **Set path…**, and pick the `.exe`. Only `.exe`
 files are accepted.
 
-Official Windows downloads:
+### Bundled emulators
+
+`npm run dist:win` ships official Windows x64 builds of four cores inside the app, so they work
+without a separate install:
+
+| Core | Version | Systems | Bundled executable |
+|---|---|---|---|
+| Lichii (experimental) | build-130 (PGO) | Switch, Switch 2 | `lichii\lichii.exe` |
+| mGBA | 0.10.5 | GBA, GB, GBC | `mgba\mGBA.exe` |
+| Azahar | 2126.2 | 3DS | `azahar\azahar.exe` |
+| RPCS3 | 0.0.43-20574 | PS3 | `rpcs3\rpcs3.exe` |
+
+- Project64, Ryujinx and PyBoy are not bundled. Install them as described below.
+- Keys, firmware and games are never bundled. RPCS3 still needs PS3 firmware installed inside RPCS3.
+- The bundled set has not been run on Windows.
+
+To rebuild the bundle, run this on a machine with network access:
+
+```sh
+npm run bundle:win                 # download, verify and extract the four builds
+npm run bundle:win -- --force      # re-extract even when the bundle is up to date
+```
+
+The script (`scripts/bundle-win.mjs`) downloads each archive into `bundle-win/cache/`, checks its
+SHA-256 against the pinned value, rejects archives with unsafe entry paths, and extracts it with
+`bsdtar` into `bundle-win/emulators/<id>/`. `bsdtar` ships with macOS and Windows 10+. On Linux,
+install `libarchive-tools`. The versions and hashes are pinned in the `MANIFEST` in that script. The
+mGBA hash comes from the first download, because upstream publishes no checksum for that file. `bundle-win/`
+is gitignored. `npm run dist:win` runs `bundle:win` first, and the electron-builder
+`extraResources` setting copies the result into the app's `resources\emulators\`.
+
+A bundled copy is checked before any system install, so a copy of one of these four in
+`Program Files` is used only when the bundled copy is missing.
+
+Official Windows downloads (for Project64, Ryujinx and PyBoy, or for a different version of the four above):
 
 | Core | Systems | Download | File to choose |
 |---|---|---|---|
@@ -218,9 +254,10 @@ core's requirements.
 npm run dist:win
 ```
 
-This builds the NSIS installer and the zip for x64 into `dist/`. The settings are in the `build` section
-of `package.json`. The Windows targets build from macOS or Linux without Wine. The output has not been
-installed on Windows yet.
+This runs `npm run bundle:win` first (see [Bundled emulators](#bundled-emulators)), then builds the NSIS
+installer and the zip for x64 into `dist/`. The settings are in the `build` section of `package.json`.
+The Windows targets build from macOS or Linux without Wine. The output has not been installed on
+Windows yet.
 
 ### Windows limitations
 
@@ -229,7 +266,8 @@ installed on Windows yet.
 - Stop asks the emulator to close. If it has not exited after about 5 seconds, Uemulator force-ends its
   whole process tree, so unsaved progress can be lost.
 - The app menu is hidden on Windows.
-- Core builds in the repo's `bin\` are found only by `npm start`, not by the installed app.
+- The installed app auto-detects only the bundled set in `resources\emulators\`. Core builds in the repo's
+  `bin\` are used only by `npm start`.
 - Project64 does not open ROMs with non-ASCII file names. This also applies on Windows. See Known limitations.
 
 ## Where data is stored
@@ -239,7 +277,7 @@ installed on Windows yet.
   this is `~/Library/Application Support/uemulator/`. On Windows it is `%APPDATA%\uemulator\`.
 - Writes go to a `.tmp` file that is then renamed over the old one. If the file is not valid JSON,
   it is renamed to `uemulator.json.corrupt` and defaults are used.
-- Built cores live in `bin/` (gitignored).
+- Built cores live in `bin/` (gitignored). The Windows bundle is staged in `bundle-win/` (gitignored).
 - Wine prefixes live in `<userData>/wine/<coreId>/`. Project64 is the only Wine-run core, so this is
   `~/Library/Application Support/uemulator/wine/project64/` on macOS. Uemulator creates it with mode 0700.
 
@@ -272,7 +310,8 @@ the button on the Running panel.
 npm test          # node --test "tests/**/*.test.js" (255 unit tests)
 npm start         # run the app
 npm run dist      # electron-builder packaging
-npm run dist:win  # Windows x64 NSIS installer and zip (see Windows)
+npm run bundle:win  # fetch and verify the bundled Windows emulators (see Windows)
+npm run dist:win    # Windows x64 NSIS installer and zip (runs bundle:win first)
 ```
 
 Add `?mock` to the renderer URL to preview the UI with sample data (`?mock=empty` for the empty state).
@@ -285,11 +324,12 @@ src/main/        main.js (window, hardening), ipc.js (handlers + validation), st
 src/main/cores/  one adapter per core + index.js (registry, executable resolution)
 src/preload/     preload.js, the only bridge to the page (window.uemu)
 src/renderer/    index.html, styles.css, app.js, state.js, ui.js, views/*.js, mock.js
-scripts/         build-cores.mjs
+scripts/         build-cores.mjs, bundle-win.mjs
 tests/           node:test unit tests for the main-process modules
 docs/design.md   UI design notes
 cores/           upstream submodules (not edited)
 bin/             built cores (generated, gitignored)
+bundle-win/      Windows emulator bundle (generated, gitignored)
 plan.md          architecture and contracts
 ```
 
@@ -317,8 +357,8 @@ plan.md          architecture and contracts
 - No prebuilt core installer. Cores must be built locally or installed by hand.
 - Build paths for cmake, .NET and RPCS3 are untested on the development machine. None of the seven
   emulators is installed there, so real-emulator launches are untested.
-- The Windows x64 build has not been run on a real Windows machine. Installer, auto-detect, Stop and
-  Project64 are all unverified there. See [Windows](#windows).
+- The Windows x64 build has not been run on a real Windows machine. Installer, auto-detect, Stop,
+  Project64 and the bundled emulators are all unverified there. See [Windows](#windows).
 - Project64 on macOS runs under Wine and Rosetta 2. Only the Wine runtime has been checked here
   (`wine --version` and a `cmd /c ver` smoke test). Project64 itself has not been run under Wine in
   this repo.
@@ -329,7 +369,8 @@ plan.md          architecture and contracts
   `Source/Project64/main.cpp:12` and `Source/Common/File.cpp:126`). A `?` in a file name is also
   treated as a 7z sub-file separator (`Source/Project64-core/N64System/N64Rom.cpp:573`). This applies
   to Project64 on Windows too. Workaround: rename the ROM with ASCII-only characters.
-- The packaged app finds the Wine runtime only through the app data link. Other cores' repo-built
-  binaries in `bin/<id>/` are found only by `npm start` and by system install locations.
+- The packaged app finds the Wine runtime only through the app data link. On Windows it finds the
+  bundled emulators in `resources\emulators\`. Other cores' repo-built binaries in `bin/<id>/` are found
+  only by `npm start` and by system install locations.
 - Licenses: each core keeps its own license (see table above). Uemulator is a launcher that starts
   those programs as separate processes. Check each core's license before you redistribute builds.

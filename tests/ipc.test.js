@@ -156,7 +156,9 @@ test('game:launch passes fullscreen setting and reports missing core', async () 
     assert.deepEqual(t.started[0].args, ['-f', '/r/g.gba']);
     const t2 = harness([{ id: '111111111111', path: '/r/g.nsp', system: 'switch' }], { fullscreen: true });
     try {
-      await t2.h['game:launch']('111111111111');
+      await assert.rejects(t2.h['game:launch']('111111111111'), /Lichii is not installed/);
+      assert.equal(t2.started.length, 0);
+      await t2.h['game:launch']('111111111111', { coreId: 'ryujinx' });
       assert.deepEqual(t2.started[0].args, ['--fullscreen', '/r/g.nsp']);
     } finally { t2.cleanup(); }
   } finally { t.cleanup(); }

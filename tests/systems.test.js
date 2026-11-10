@@ -38,7 +38,7 @@ test('detectSystem uses only the last extension', () => {
 
 test('coreForSystem defaults', () => {
   assert.equal(coreForSystem('n64', {}), 'project64');
-  assert.equal(coreForSystem('switch', {}), 'ryujinx');
+  assert.equal(coreForSystem('switch', {}), 'lichii');
   assert.equal(coreForSystem('3ds', {}), 'azahar');
   assert.equal(coreForSystem('gba', {}), 'mgba');
   assert.equal(coreForSystem('gb', { gbCore: 'mgba' }), 'mgba');

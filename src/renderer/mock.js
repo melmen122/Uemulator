@@ -96,7 +96,7 @@ const library = () => clone({ folders: FOLDERS, games });
 
 function defaultCoreFor(game) {
   if (game.system === 'gb' || game.system === 'gbc') return settings.gbCore;
-  return { n64: 'project64', ps3: 'rpcs3', switch: 'ryujinx', switch2: 'lichii', '3ds': 'azahar', gba: 'mgba' }[game.system];
+  return { n64: 'project64', ps3: 'rpcs3', switch: 'lichii', switch2: 'lichii', '3ds': 'azahar', gba: 'mgba' }[game.system];
 }
 
 function extraGames(folder) {

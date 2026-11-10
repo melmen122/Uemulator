@@ -23,7 +23,7 @@ export const TABS = [
   { id: 'gb', label: 'GB/GBC', title: 'Game Boy / Color', systems: ['gb', 'gbc'] },
 ];
 
-const DEFAULT_CORE = { n64: 'project64', ps3: 'rpcs3', switch: 'ryujinx', switch2: 'lichii', '3ds': 'azahar', gba: 'mgba' };
+const DEFAULT_CORE = { n64: 'project64', ps3: 'rpcs3', switch: 'lichii', switch2: 'lichii', '3ds': 'azahar', gba: 'mgba' };
 
 export const state = {
   view: 'library',

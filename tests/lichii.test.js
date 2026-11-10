@@ -106,11 +106,11 @@ test('registry lists seven cores ending with lichii', () => {
   assert.equal(d.license, 'GPL-3.0-or-later');
 });
 
-test('switch system: ryujinx, lichii alternative; switch2 is lichii-only', () => {
+test('switch system: lichii default, ryujinx alternative; switch2 is lichii-only', () => {
   const sw = getSystem('switch');
-  assert.equal(sw.coreId, 'ryujinx');
-  assert.deepEqual(sw.altCores, ['lichii']);
-  assert.deepEqual(coresForSystem('switch'), ['ryujinx', 'lichii']);
+  assert.equal(sw.coreId, 'lichii');
+  assert.deepEqual(sw.altCores, ['ryujinx']);
+  assert.deepEqual(coresForSystem('switch'), ['lichii', 'ryujinx']);
   assert.equal(SYSTEMS.length, 8);
   assert.deepEqual(sw.extensions, ['.nsp', '.xci', '.nca', '.nro']);
   assert.equal(detectSystem('/r/a.nsp'), 'switch');
@@ -123,12 +123,12 @@ test('switch system: ryujinx, lichii alternative; switch2 is lichii-only', () =>
   assert.deepEqual(coresForSystem('switch2'), ['lichii']);
 });
 
-test('coreForSystem: switch is always ryujinx, switch2 always lichii (stray switchCore ignored)', () => {
+test('coreForSystem: switch is always lichii, switch2 always lichii (stray switchCore ignored)', () => {
   for (const st of [{ switchCore: 'lichii' }, { switchCore: 'ryujinx' }, { switchCore: 'mgba' }, {}, undefined]) {
-    assert.equal(coreForSystem('switch', st), 'ryujinx');
+    assert.equal(coreForSystem('switch', st), 'lichii');
     assert.equal(coreForSystem('switch2', st), 'lichii');
   }
-  assert.equal(coreForSystem('switch'), 'ryujinx');
+  assert.equal(coreForSystem('switch'), 'lichii');
   assert.equal(coreForSystem('switch2'), 'lichii');
 });
 
@@ -139,7 +139,7 @@ test('gbCore does not affect switch/switch2; other systems unchanged', () => {
   assert.equal(coreForSystem('3ds', s), 'azahar');
   assert.equal(coreForSystem('n64', s), 'project64');
   assert.equal(coreForSystem('ps3', s), 'rpcs3');
-  assert.equal(coreForSystem('switch', { gbCore: 'pyboy' }), 'ryujinx');
+  assert.equal(coreForSystem('switch', { gbCore: 'pyboy' }), 'lichii');
   assert.equal(coreForSystem('switch2', { gbCore: 'pyboy' }), 'lichii');
   assert.equal(detectSystem('/r/a.nsp'), 'switch');
   for (const e of ['.nsp', '.xci', '.nca', '.nro']) assert.notEqual(detectSystem('/r/[0400C3F00006E000]' + e), 'switch2');
@@ -225,9 +225,17 @@ function harness(settings, system = 'switch') {
 }
 const PATHS = { lichii: '/my/lichii', ryujinx: '/my/ryujinx' };
 
-test('game:launch switch routes to ryujinx by default', async () => {
+test('game:launch switch routes to lichii by default', async () => {
   const t = harness({ corePaths: PATHS });
   await t.h['game:launch']('bbbbbbbbbbbb');
+  assert.equal(t.started.length, 1);
+  assert.equal(t.started[0].command, '/my/lichii');
+  assert.deepEqual(t.started[0].args, ['-g', NSP]);
+});
+
+test('game:launch switch with explicit coreId ryujinx still launches ryujinx', async () => {
+  const t = harness({ corePaths: PATHS });
+  await t.h['game:launch']('bbbbbbbbbbbb', { coreId: 'ryujinx' });
   assert.equal(t.started.length, 1);
   assert.equal(t.started[0].command, '/my/ryujinx');
   assert.deepEqual(t.started[0].args, [NSP]);

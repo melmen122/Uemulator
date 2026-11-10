@@ -71,7 +71,7 @@ export function createCoresView() {
       core.id === 'rpcs3'
         ? h('p', { class: 'core-note' }, 'RPCS3 needs PS3 firmware (PS3UPDAT.PUP) installed inside RPCS3 itself before games will boot.') : null,
       core.id === 'lichii'
-        ? h('p', { class: 'core-note' }, 'Lichii is a very experimental Switch 2 emulator (it can also run Switch 1 games). Switch 2 games are detected by title ID, a best-effort guess. Supply your own legally obtained keys and firmware; build it from source or use Set path… to point at an official build.') : null,
+        ? h('p', { class: 'core-note' }, 'Lichii is the default core for Switch and Switch 2 games. It is very experimental. Switch 2 games are detected by title ID, a best-effort guess. Supply your own legally obtained keys and firmware; build it from source or use Set path… to point at an official build.') : null,
       h('div', { class: 'core-actions' },
         h('button', { type: 'button', class: 'btn btn-primary btn-sm', onClick: () => pickCorePath(core.id) }, icon('folder', 15), 'Set path…'),
         h('button', { type: 'button', class: 'btn btn-sm', 'aria-disabled': overridden ? null : 'true', title: overridden ? 'Go back to automatic detection' : 'Already using automatic detection',
