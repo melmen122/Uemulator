@@ -80,6 +80,9 @@ export const coreForGame = (game) => coreById(coreIdForSystem(game.system));
 /** null when the game can be launched, otherwise a human sentence explaining why not. */
 export function launchBlockReason(game) {
   if (state.bridgeMissing) return 'The Uemulator bridge is unavailable in this preview.';
+  // Switch update / DLC packages hold no game of their own (the main process rejects them as well).
+  if (game.content === 'update') return 'This is a game update, not a game. Install it in Lichii (File > Install Files to NAND) after the base game, then launch the base game.';
+  if (game.content === 'dlc') return 'This is downloadable content (DLC), not a game. Install it in Lichii (File > Install Files to NAND), then launch the base game.';
   if (state.loading && !state.cores.length) return 'Checking installed emulators…';
   const core = coreForGame(game);
   if (!core) return `No emulator is configured for ${(SYSTEMS[game.system] || {}).name || game.system}.`;
@@ -202,7 +205,9 @@ export async function launchGame(gameId) {
   if (!game || state.launching.has(gameId)) return;
   const reason = launchBlockReason(game);
   if (reason) {
-    toast({ kind: 'error', title: `Can’t play ${game.title}`, message: reason, action: state.bridgeMissing ? undefined : { label: 'Open Cores', onClick: () => setView('cores') } });
+    // "Open Cores" only helps when the emulator is the problem, not for an update/DLC package.
+    const coreProblem = !state.bridgeMissing && !game.content;
+    toast({ kind: 'error', title: `Can’t play ${game.title}`, message: reason, action: coreProblem ? { label: 'Open Cores', onClick: () => setView('cores') } : undefined });
     return;
   }
   const core = coreForGame(game);

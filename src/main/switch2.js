@@ -27,6 +27,36 @@ function classifyTitleId(hex) {
 }
 
 /**
+ * What a Switch 1 title ID stands for. Application IDs end in 000, their update (patch) in 800 and
+ * add-on content (DLC) in the other low-12-bit values (base id + 0x1000 + index). Only 01xxxxxxxxxxxxxx
+ * IDs are classified: Switch 2 titles and anything else return null.
+ * @param {*} hex
+ * @returns {'base'|'update'|'dlc'|null}
+ */
+function contentKindFromTitleId(hex) {
+  if (classifyTitleId(hex) !== 'switch') return null;
+  const low = parseInt(hex.slice(-3), 16);
+  if (low === 0x000) return 'base';
+  if (low === 0x800) return 'update';
+  return 'dlc';
+}
+
+/**
+ * The sentence shown when an update or DLC file is launched as if it were a game.
+ * @param {*} kind 'update' | 'dlc'
+ * @returns {string|null} null for anything else
+ */
+function contentBlockMessage(kind) {
+  if (kind === 'update') {
+    return 'This file is a game update, not a game, so it cannot be started on its own. Install it in the emulator after the base game (Lichii: File > Install Files to NAND), then launch the base game.';
+  }
+  if (kind === 'dlc') {
+    return 'This file is downloadable content (DLC), not a game, so it cannot be started on its own. Install it in the emulator (Lichii: File > Install Files to NAND), then launch the base game.';
+  }
+  return null;
+}
+
+/**
  * First bracketed, classifiable title ID in a file or folder name, e.g. "Game [0400C3F00006E000].nsp".
  * @param {*} name
  * @returns {string|null} uppercased title ID
@@ -106,4 +136,7 @@ function detectSwitchGeneration(info) {
   return kind === 'switch2' ? 'switch2' : 'switch';
 }
 
-module.exports = { TITLE_ID_RE, PFS0_HEAD_BYTES, classifyTitleId, titleIdFromName, titleIdFromPath, parsePfs0TitleId, detectSwitchGeneration };
+module.exports = {
+  TITLE_ID_RE, PFS0_HEAD_BYTES, classifyTitleId, contentKindFromTitleId, contentBlockMessage,
+  titleIdFromName, titleIdFromPath, parsePfs0TitleId, detectSwitchGeneration,
+};

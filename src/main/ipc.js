@@ -8,6 +8,7 @@ const nodeUrl = require('url');
 const { CORES, getCore, describeCore, resolveExecutable } = require('./cores');
 const { getSystem, coreForSystem, EXTENSIONS } = require('./systems');
 const { scanFoldersAsync } = require('./library');
+const { contentBlockMessage } = require('./switch2');
 
 const MAX_PATH_LEN = 4096;
 const MAX_URL_LEN = 2048;
@@ -254,6 +255,9 @@ function createHandlers(ctx) {
       const settings = store.getSettings();
       const system = getSystem(game.system);
       if (!system) throw new Error('Unknown system for that game');
+      // A Switch update or DLC package cannot start on its own: explain instead of letting the emulator fail.
+      const contentMessage = contentBlockMessage(game.content);
+      if (contentMessage) throw new Error(contentMessage);
 
       const coreId = opts.coreId || coreForSystem(game.system, settings);
       const core = validateCoreId(coreId);

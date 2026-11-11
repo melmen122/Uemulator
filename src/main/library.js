@@ -4,7 +4,7 @@ const nodeFs = require('fs');
 const nodePath = require('path');
 const crypto = require('crypto');
 const { detectSystem, isUsrdirEboot } = require('./systems');
-const { PFS0_HEAD_BYTES, classifyTitleId, titleIdFromPath, parsePfs0TitleId } = require('./switch2');
+const { PFS0_HEAD_BYTES, classifyTitleId, contentKindFromTitleId, titleIdFromPath, parsePfs0TitleId } = require('./switch2');
 
 const MAX_DEPTH = 6;
 // Compared case-insensitively. The last two are Windows system folders present at the root of every NTFS drive
@@ -176,21 +176,30 @@ function* walk(st, dir, depth) {
       } else {
         title = titleFromPath(full);
       }
+      let content = null; // 'update' | 'dlc' for a Switch 1 .nsp that is not a game on its own
       if (system === 'switch') {
         // Switch 1 vs 2: title ID from the name/folders; for .nsp fall back to the PFS0 ticket name.
         // .xci/.nca/.nro cannot be identified without keys, so they stay name-based only.
-        let kind = classifyTitleId(titleIdFromPath(full));
-        if (!kind && /\.nsp$/i.test(full)) {
+        const isNsp = /\.nsp$/i.test(full);
+        let titleId = titleIdFromPath(full);
+        let kind = classifyTitleId(titleId);
+        if (!kind && isNsp) {
           try {
             // stat first (follows symlinks): opening a FIFO/device would block and wedge the scan.
             const nspStat = yield ['stat', full];
             if (nspStat && typeof nspStat.isFile === 'function' && nspStat.isFile()) {
               const head = yield ['readHead', full, PFS0_HEAD_BYTES];
-              kind = classifyTitleId(parsePfs0TitleId(head));
+              titleId = parsePfs0TitleId(head);
+              kind = classifyTitleId(titleId);
             }
           } catch { /* fall back to Switch 1 */ }
         }
         if (kind === 'switch2') system = 'switch2';
+        else if (isNsp) {
+          // An update (id ends 800) or DLC package holds only patch/add-on data and cannot start alone.
+          const c = contentKindFromTitleId(titleId);
+          if (c === 'update' || c === 'dlc') content = c;
+        }
       }
       st.found.set(id, {
         id,
@@ -200,6 +209,7 @@ function* walk(st, dir, depth) {
         size,
         lastPlayed: old && typeof old.lastPlayed === 'number' ? old.lastPlayed : null,
         favorite: !!(old && old.favorite),
+        ...(content ? { content } : {}),
       });
     }
   }

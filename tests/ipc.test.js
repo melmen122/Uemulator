@@ -308,3 +308,19 @@ test('game:launch rejects renderer-supplied env and spawns nothing', { skip: pro
     assert.equal(t.started.length, 0);
   } finally { t.cleanup(); }
 });
+
+test('game:launch refuses a Switch update or DLC package with a readable error and starts nothing', async () => {
+  const t = harness([
+    { id: '555555555555', path: '/r/g.nsp', system: 'switch', content: 'update' },
+    { id: '666666666666', path: '/r/g.nsp', system: 'switch', content: 'dlc' },
+    { id: '777777777777', path: '/r/g.nsp', system: 'switch' },
+  ]);
+  try {
+    await assert.rejects(t.h['game:launch']('555555555555', { coreId: 'ryujinx' }), /game update, not a game/);
+    await assert.rejects(t.h['game:launch']('666666666666', { coreId: 'ryujinx' }), /DLC/);
+    assert.equal(t.started.length, 0);
+    // A normal Switch game still launches (the Ryujinx binary is "installed" in this harness).
+    await t.h['game:launch']('777777777777', { coreId: 'ryujinx' });
+    assert.equal(t.started.length, 1);
+  } finally { t.cleanup(); }
+});

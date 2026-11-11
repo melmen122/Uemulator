@@ -89,6 +89,8 @@ function sanitizeGames(games) {
       size: Number.isFinite(g.size) ? g.size : 0,
       lastPlayed: typeof g.lastPlayed === 'number' ? g.lastPlayed : null,
       favorite: !!g.favorite,
+      // Switch update / DLC packages: listed, but never launched (see ipc 'game:launch').
+      ...(g.content === 'update' || g.content === 'dlc' ? { content: g.content } : {}),
     }));
 }
 

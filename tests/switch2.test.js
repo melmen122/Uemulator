@@ -266,3 +266,74 @@ test('store library: switch path may carry system switch or switch2; other syste
     assert.deepEqual(ids(createStore({ dir })), ['aaaaaaaaaaaa', 'bbbbbbbbbbbb', 'eeeeeeeeeeee']);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ---- update / DLC packages ----
+const BASE = '0100152000022000';
+const UPD = '0100152000022800';
+const DLC1 = '0100152000023001';
+
+test('contentKindFromTitleId: base, update and dlc; Switch 2 and junk are null', () => {
+  assert.equal(sw.contentKindFromTitleId(BASE), 'base');
+  assert.equal(sw.contentKindFromTitleId(UPD), 'update');
+  assert.equal(sw.contentKindFromTitleId(UPD.toLowerCase()), 'update');
+  assert.equal(sw.contentKindFromTitleId(DLC1), 'dlc');
+  assert.equal(sw.contentKindFromTitleId('0100152000023FFF'), 'dlc');
+  for (const bad of [S2, '0400152000022800', OTHER, '', null, undefined, 5, {}]) {
+    assert.equal(sw.contentKindFromTitleId(bad), null, String(bad));
+  }
+});
+
+test('contentBlockMessage: a readable sentence for update and dlc only', () => {
+  assert.match(sw.contentBlockMessage('update'), /game update, not a game/);
+  assert.match(sw.contentBlockMessage('update'), /Install Files to NAND/);
+  assert.match(sw.contentBlockMessage('dlc'), /DLC/);
+  assert.match(sw.contentBlockMessage('dlc'), /launch the base game/);
+  for (const other of [undefined, null, 'base', 'switch', '', 5, {}]) {
+    assert.equal(sw.contentBlockMessage(other), null, String(other));
+  }
+});
+
+test('scan: update and DLC .nsp are flagged (by name or PFS0 ticket); base, .xci, unknown and Switch 2 are not', async () => {
+  touch(`MK [${UPD}][v1245184].nsp`, 'junk'); // update by name
+  touch(`MK [${DLC1}].nsp`, 'junk'); // DLC by name
+  touch(`MK [${BASE}].nsp`, 'junk'); // base by name
+  touch('UpdTik.nsp', nspWith(UPD)); // update only via the ticket name
+  touch('DlcTik.nsp', nspWith(DLC1));
+  touch('BaseTik.nsp', nspWith(BASE));
+  touch(`Updatelike [${UPD}].xci`, 'junk'); // not an .nsp: never flagged
+  touch('Plain.nsp', 'not a pfs0'); // unidentified
+  touch(`Switch2 [${S2}].nsp`, 'junk'); // Switch 2 is never flagged
+  await both(async (kind, scan) => {
+    const m = byBase(await scan([root]));
+    assert.equal(m[`MK [${UPD}][v1245184].nsp`].content, 'update', kind);
+    assert.equal(m[`MK [${DLC1}].nsp`].content, 'dlc', kind);
+    assert.equal(m['UpdTik.nsp'].content, 'update', kind);
+    assert.equal(m['DlcTik.nsp'].content, 'dlc', kind);
+    for (const name of [`MK [${BASE}].nsp`, 'BaseTik.nsp', `Updatelike [${UPD}].xci`, 'Plain.nsp', `Switch2 [${S2}].nsp`]) {
+      assert.equal('content' in m[name], false, `${kind}: ${name}`);
+    }
+    assert.equal(m[`MK [${UPD}][v1245184].nsp`].system, 'switch', kind); // still listed as Switch
+    assert.equal(m[`Switch2 [${S2}].nsp`].system, 'switch2', kind);
+  });
+});
+
+test('store library keeps content only for update/dlc and drops anything else', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uemu-sw2c-'));
+  try {
+    const mk = (id, p, content) => ({ id, title: 't', path: p, system: 'switch', size: 1, lastPlayed: null, favorite: false, ...(content === undefined ? {} : { content }) });
+    const st = createStore({ dir });
+    st.setLibrary({ folders: [], games: [
+      mk('aaaaaaaaaaaa', '/g/a.nsp', 'update'),
+      mk('bbbbbbbbbbbb', '/g/b.nsp', 'dlc'),
+      mk('cccccccccccc', '/g/c.nsp', 'base'),
+      mk('dddddddddddd', '/g/d.nsp', '<script>'),
+      mk('eeeeeeeeeeee', '/g/e.nsp'),
+    ] });
+    for (const s of [st, createStore({ dir })]) {
+      const m = Object.fromEntries(s.getLibrary().games.map((g) => [g.id, g]));
+      assert.equal(m.aaaaaaaaaaaa.content, 'update');
+      assert.equal(m.bbbbbbbbbbbb.content, 'dlc');
+      for (const id of ['cccccccccccc', 'dddddddddddd', 'eeeeeeeeeeee']) assert.equal('content' in m[id], false, id);
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
