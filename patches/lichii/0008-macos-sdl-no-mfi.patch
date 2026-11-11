@@ -1,0 +1,32 @@
+diff --git a/src/input_common/drivers/sdl_driver.cpp b/src/input_common/drivers/sdl_driver.cpp
+--- a/src/input_common/drivers/sdl_driver.cpp
++++ b/src/input_common/drivers/sdl_driver.cpp
+@@ -5,6 +5,7 @@
+ 
+ #include <algorithm>
+ #include <array>
++#include <cstdlib>
+ #include <numbers>
+ #include "common/logging.h"
+ #include "common/math_util.h"
+@@ -742,6 +742,20 @@ SDLDriver::SDLDriver(std::string input_engine_) : InputEngine(std::move(input_en
+     // Disable hidapi driver for xbox. Already default on Windows, this causes conflict with native
+     // driver on Linux.
+     SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_XBOX, "0");
++
++#ifdef __APPLE__
++    // On macOS SDL's GameController.framework ("MFi") backend claims generic Bluetooth HID pads
++    // (e.g. Switch Pro clones that report VID/PID 0) and then does not expose them as joysticks,
++    // so they vanish from Settings > Controls. Real Xbox/PlayStation/Switch pads are still handled
++    // by the HIDAPI drivers, and everything else by the IOKit backend. EDEN_SDL_MFI=1 restores
++    // SDL's default.
++    {
++        const char* const mfi = std::getenv("EDEN_SDL_MFI");
++        if (mfi == nullptr || mfi[0] != '1') {
++            SDL_SetHint(SDL_HINT_JOYSTICK_MFI, "0");
++        }
++    }
++#endif
+ 
+     // If the frontend is going to manage the event loop, then we don't start one here
+     start_thread = SDL_WasInit(SDL_INIT_JOYSTICK | SDL_INIT_GAMEPAD) == 0;

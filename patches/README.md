@@ -9,6 +9,9 @@ Currently only `patches/lichii/` is used by `node scripts/build-cores.mjs lichii
 - Regenerate from the scratch copy: `git -C bin/.build/lichii-work diff > patches/lichii/NNNN-name.patch` (the scratch copy must be a git checkout at the same commit as `cores/lichii`).
 - Env switches: `LICHII_SRC=/abs/path` (source other than `cores/lichii`), `LICHII_BUILD_TYPE=Release|RelWithDebInfo` (the latter builds in `bin/.build/lichii-relwithdebinfo`), `LICHII_BUILD_TAG` (default `uemulator-local`), `LICHII_BUILD_CLI=1` (also build and bundle `eden-cli`).
 
+## Applied patches worth knowing about
+- `0008-macos-sdl-no-mfi.patch`: on macOS sets `SDL_JOYSTICK_MFI=0` in `SDLDriver`. SDL3's GameController.framework backend claims generic Bluetooth HID pads that report VID/PID 0 (e.g. the "Lic3 Pro Controller", a Switch Pro clone) and never exposes them, so they vanished from Settings > Controls. The IOKit backend lists them. `EDEN_SDL_MFI=1` restores SDL's default. After this change the pad's SDL GUID is `0300b012...` (name CRC), so an older mapping with `030000004c69...` must be re-saved or converted.
+
 ## rejected/
 Patches that were built and measured, then dropped. Files in `patches/lichii/rejected/` are not applied (only `*.patch` directly in `patches/lichii/` are).
 - `0006-oot-skip-heavy-dispatch.patch`: with OoT's "No sharpening" on, also skip the unused heavy dispatch (`d9ee412f00ce399a`). Replay, resolution x0.5: 35.1 ms median with the dispatch kept vs 36.7 ms skipped, so no gain; not worth the risk of a visual change.
