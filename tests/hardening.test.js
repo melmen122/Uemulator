@@ -66,10 +66,13 @@ test('native core override that is a 0644 file is NOT ready', { skip: !posix }, 
     fs.writeFileSync(f, 'x');
     fs.chmodSync(f, 0o644);
     const mgba = cores.getCore('mgba');
-    const r = cores.resolveExecutable(mgba, { corePaths: { mgba: f } }, { binDir: '/nobin', homedir: d, env: {}, which: () => null });
+    // Only the override file can "exist": a real mGBA installed in /Applications or on PATH must not
+    // turn this into a pass for the wrong reason (the test would then depend on the machine).
+    const deps = { binDir: '/nobin', homedir: d, env: {}, which: () => null, existsSync: (p) => p === f && (fs.statSync(p).mode & 0o111) !== 0 };
+    const r = cores.resolveExecutable(mgba, { corePaths: { mgba: f } }, deps);
     assert.notEqual(r.status, 'ready');
     fs.chmodSync(f, 0o755);
-    const r2 = cores.resolveExecutable(mgba, { corePaths: { mgba: f } }, { binDir: '/nobin', homedir: d, env: {}, which: () => null });
+    const r2 = cores.resolveExecutable(mgba, { corePaths: { mgba: f } }, deps);
     assert.deepEqual(r2, { status: 'ready', exe: f, source: 'override' });
   } finally { rm(d); }
 });
