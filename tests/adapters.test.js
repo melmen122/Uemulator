@@ -150,7 +150,9 @@ test('candidates return absolute-ish strings and honor binDir first', () => {
     const list = c.candidates(ctx);
     assert.ok(list.length > 0, c.id);
     assert.ok(list.every((p) => typeof p === 'string' && p.startsWith('/')), c.id);
-    assert.ok(list[0].startsWith('/app/bin/' + c.id), `${c.id} built bin first`);
+    // Lichii on macOS deliberately prefers the installed /Applications app; its built copy is the fallback.
+    if (c === lichii) assert.ok(list.some((p) => p.startsWith('/app/bin/lichii')), 'lichii built bin still a candidate');
+    else assert.ok(list[0].startsWith('/app/bin/' + c.id), `${c.id} built bin first`);
   }
   assert.deepEqual(project64.candidates(ctx), []);
   assert.ok(project64.candidates({ platform: 'win32', binDir: 'C:\\b', env: {} })[0].startsWith('C:\\b\\project64'));

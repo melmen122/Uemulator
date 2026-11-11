@@ -21,11 +21,13 @@ module.exports = {
     const P = pathFor(platform);
     const out = [];
     if (platform === 'darwin') {
-      if (binDir) out.push(P.join(binDir, 'lichii', 'lichii.app', 'Contents', 'MacOS', 'lichii'));
+      // The installed app first: it is the one the user opens by hand and configures (controllers, settings),
+      // and macOS ties input permissions to the app they launched. The locally built copy is the fallback.
       out.push(
         '/Applications/lichii.app/Contents/MacOS/lichii',
         P.join(homedir, 'Applications', 'lichii.app', 'Contents', 'MacOS', 'lichii')
       );
+      if (binDir) out.push(P.join(binDir, 'lichii', 'lichii.app', 'Contents', 'MacOS', 'lichii'));
     } else if (platform === 'win32') {
       if (binDir) out.push(P.join(binDir, 'lichii', 'lichii.exe'));
       out.push(...windowsInstallCandidates({ env, homedir }, ['Lichii'], 'lichii.exe'));
