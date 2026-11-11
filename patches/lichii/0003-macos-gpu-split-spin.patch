@@ -1,0 +1,93 @@
+diff --git a/src/video_core/gpu_split.cpp b/src/video_core/gpu_split.cpp
+index 2a7e438..dccaa6c 100644
+--- a/src/video_core/gpu_split.cpp
++++ b/src/video_core/gpu_split.cpp
+@@ -49,6 +49,45 @@ void Pause() {
+ 
+ [[maybe_unused]] std::atomic<u32> g_back_thread_id{};
+ 
++#ifdef __APPLE__
++// macOS: how long a thread spins (with Pause) before it parks on a futex-style atomic wait
++// (__ulock_wait). The old instruction counts (16384 / 8192 Pause calls) are a few microseconds
++// on Apple Silicon, where `yield` is nearly free, so every short wait ended in a park + wake
++// round trip through the kernel. EDEN_NX2_SPIN_US=<us> sets the budget (default 100); 0 restores
++// the instruction-count spin. Read once.
++u32 SpinMicroseconds() {
++    static const u32 value = [] {
++        const char* const text = std::getenv("EDEN_NX2_SPIN_US");
++        if (text == nullptr || *text == '\0') {
++            return 100U;
++        }
++        char* end = nullptr;
++        const unsigned long parsed = std::strtoul(text, &end, 10);
++        return end != text && *end == '\0' ? static_cast<u32>(std::min(parsed, 1'000'000UL))
++                                            : 100U;
++    }();
++    return value;
++}
++
++/// True once a wait has spun for SpinMicroseconds() (checked every 64 calls). `spins` counts up
++/// from 0 within one wait; a smaller value than the last call starts a new wait.
++bool SpinBudgetSpent(u32 spins) {
++    thread_local u32 last_spins = ~u32{0};
++    thread_local std::chrono::steady_clock::time_point start;
++    thread_local bool spent = false;
++    if (last_spins == ~u32{0} || spins <= last_spins) {
++        start = std::chrono::steady_clock::now();
++        spent = false;
++    }
++    last_spins = spins;
++    if (!spent && (spins & 63) == 63 &&
++        std::chrono::steady_clock::now() - start >= std::chrono::microseconds{SpinMicroseconds()}) {
++        spent = true;
++    }
++    return spent;
++}
++#endif
++
+ } // Anonymous namespace
+ 
+ void GpuSplit::CheckOwner(const char* where) {
+@@ -366,7 +405,13 @@ bool GpuSplit::WaitFor(u64 target, DrainSite site) {
+ }
+ 
+ void GpuSplit::Backoff(u32 spins, u64 target) {
+-    if (spins < 16384) {
++#ifdef __APPLE__
++    // Time-based spin before parking (EDEN_NX2_SPIN_US, see SpinMicroseconds); 0 = count-based.
++    const bool keep_spinning = SpinMicroseconds() > 0 ? !SpinBudgetSpent(spins) : spins < 16384;
++#else
++    const bool keep_spinning = spins < 16384;
++#endif
++    if (keep_spinning) {
+         Pause();
+         return;
+     }
+@@ -563,11 +608,26 @@ void GpuSplit::BackLoop(std::stop_token stop_token) {
+             const auto spin_start = g_acquire_counting ? std::chrono::steady_clock::now()
+                                                        : std::chrono::steady_clock::time_point{};
+             // The front usually sends more within microseconds: spin briefly before sleeping.
+-            for (u32 spins = 0; spins < 8192 && available == read_position &&
++#ifdef __APPLE__
++            // EDEN_NX2_SPIN_US: spin for a time budget, not 8192 Pause calls (see SpinMicroseconds).
++            const u32 spin_us = SpinMicroseconds();
++            const auto spin_deadline = std::chrono::steady_clock::now() +
++                                       std::chrono::microseconds{spin_us};
++            const u32 spin_limit = spin_us > 0 ? ~u32{0} : 8192;
++#else
++            constexpr u32 spin_limit = 8192;
++#endif
++            for (u32 spins = 0; spins < spin_limit && available == read_position &&
+                                 !hook_requested.load(std::memory_order_relaxed);
+                  ++spins) {
+                 Pause();
+                 available = published.load(std::memory_order_acquire);
++#ifdef __APPLE__
++                if (spin_us > 0 && (spins & 63) == 63 &&
++                    std::chrono::steady_clock::now() >= spin_deadline) {
++                    break;
++                }
++#endif
+             }
+             if (g_acquire_counting) {
+                 Count(g_acquire_stats.back_waits);

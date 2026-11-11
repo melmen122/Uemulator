@@ -50,6 +50,9 @@ Options:
   --jobs N       parallel build jobs (default: CPU count)
   -h, --help     show this help
 
+Lichii env switches: LICHII_SRC (source checkout instead of cores/lichii), LICHII_BUILD_TYPE (Release | RelWithDebInfo),
+LICHII_BUILD_TAG, LICHII_BUILD_CLI=1 (also build eden-cli). patches/lichii/*.patch are applied to a copy; see patches/README.md.
+
 Examples:
   node scripts/build-cores.mjs --check
   node scripts/build-cores.mjs mgba pyboy
@@ -102,7 +105,7 @@ const HINTS = {
   // Lichii (cores/lichii docs/Deps.md + .github/workflows/release-binaries.yml): CMake + Ninja, Qt 6 (incl. Charts), glslang,
   // FFmpeg, SDL3 (bundled), Vulkan headers (bundled on macOS/Linux; the SDK on Windows).
   lichiiLibs: {
-    darwin: 'brew install autoconf automake boost ffmpeg fmt glslang hidapi libtool libusb lz4 ninja nlohmann-json openssl pkg-config qt@6 sdl3 speexdsp zlib zstd cmake molten-vk vulkan-loader spirv-tools vulkan-utility-libraries',
+    darwin: 'brew install autoconf automake boost ffmpeg fmt glslang hidapi libtool libusb lz4 ninja nlohmann-json openssl pkg-config qt@6 sdl3 speexdsp zlib zstd cmake catch2 molten-vk vulkan-loader spirv-tools vulkan-utility-libraries ccache',
     linux: 'sudo apt install autoconf cmake g++ gcc git glslang-tools libglu1-mesa-dev libpulse-dev libtool libudev-dev libxkbcommon-x11-0 mesa-common-dev nasm ninja-build qt6-base-private-dev qt6-charts-dev qt6-tools-dev libavfilter-dev libavcodec-dev libswscale-dev pkg-config zlib1g-dev libva-dev libvdpau-dev spirv-tools spirv-headers libusb-1.0-0-dev libboost-dev libboost-fiber-dev libboost-context-dev libopus-dev libasound2-dev',
     win32: 'Install Visual Studio 2022 (Desktop development with C++), CMake, Ninja, Qt 6.8 with Qt Charts (set Qt6_ROOT, e.g. C:\\Qt\\6.8.3\\msvc2022_64) and the Vulkan SDK (sets VULKAN_SDK); see cores/lichii/docs/Build.md. Or download the official build from https://github.com/zortos293/Lichii/releases and use Settings.',
   },
@@ -163,7 +166,7 @@ function hasCCompiler() {
 /** True when a Qt 6 install can be located (env hints, Homebrew, or qmake6/qtpaths6 on PATH). */
 function hasQt6() {
   if (process.env.Qt6_ROOT || process.env.Qt6_DIR || process.env.QTDIR) return true;
-  if (PLATFORM === 'darwin' && capture('brew', ['--prefix', '--installed', 'qt'])) return true;
+  if (PLATFORM === 'darwin' && ['qt@6', 'qt'].some((f) => capture('brew', ['--prefix', '--installed', f]))) return true;
   return exists('qmake6') || exists('qtpaths6') || exists('qmake', ['-v']);
 }
 
@@ -213,6 +216,98 @@ function cleanDir(dir) {
 
 function copyTree(src, dest) {
   fs.cpSync(src, dest, { recursive: true, verbatimSymlinks: true, force: true });
+}
+
+// ---------- lichii: patched source + build dir (pure helpers are exported for tests) ----------
+const LICHII_BUILD_TYPES = ['Release', 'RelWithDebInfo'];
+
+/** Sorted absolute paths of the *.patch files directly inside `dir` ([] when the dir is missing). */
+function listPatches(dir) {
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+  return entries
+    .filter((e) => e.isFile() && e.name.endsWith('.patch'))
+    .map((e) => path.join(dir, e.name))
+    .sort((a, b) => {
+      const x = path.basename(a), y = path.basename(b);
+      return x < y ? -1 : x > y ? 1 : 0;
+    });
+}
+
+/** sha256 (hex) over each patch's file name and contents, in the order given (order-sensitive). */
+function hashPatches(paths) {
+  const hash = crypto.createHash('sha256');
+  for (const p of paths) {
+    const body = fs.readFileSync(p);
+    hash.update(`${path.basename(p)}\0${body.length}\0`);
+    hash.update(body);
+    hash.update('\0');
+  }
+  return hash.digest('hex');
+}
+
+/** Out-of-tree build dir for a Lichii build type; throws on an unknown type. Release and RelWithDebInfo never share one. */
+function lichiiBuildDir(root, buildType) {
+  if (buildType === 'Release') return path.join(root, 'bin', '.build', 'lichii');
+  if (buildType === 'RelWithDebInfo') return path.join(root, 'bin', '.build', 'lichii-relwithdebinfo');
+  throw new Error(`Unknown LICHII_BUILD_TYPE "${buildType}". Use one of: ${LICHII_BUILD_TYPES.join(', ')}`);
+}
+
+/**
+ * Copy `src` to `dest` (replacing it) without .git, a top-level build/ or .build/ dir, or anything under bin/.build,
+ * then apply every patch in order with git apply (each one is --check'ed first). The copy sits under a git repo
+ * (the launcher's own), so GIT_CEILING_DIRECTORIES keeps git from discovering it and applying relative to the wrong root.
+ * Skipped when the stamp from a previous run still matches (same patches, same source commit, no tracked edits; never for an explicit LICHII_SRC),
+ * so unchanged files keep their mtimes and ninja/ccache stay incremental.
+ * Returns { ok: true, dir, reused } or { ok: false, note }.
+ */
+function preparePatchedSource({ src, dest, patches, ceiling, allowReuse = true }) {
+  const gitEnv = { ...process.env, GIT_CEILING_DIRECTORIES: ceiling };
+  const head = capture('git', ['-C', src, 'rev-parse', 'HEAD']);
+  const dirty = head ? capture('git', ['-C', src, 'diff', 'HEAD']) : null;
+  const fingerprint = allowReuse && head && dirty !== null
+    ? crypto.createHash('sha256').update(`${head}\0${dirty}`).digest('hex')
+    : null; // reuse disabled or not a git checkout: cannot tell whether the source changed, so always refresh
+  const stamp = JSON.stringify({ src: path.resolve(src), source: fingerprint, patches: hashPatches(patches) });
+  const stampFile = path.join(dest, '.uemulator-patch-stamp');
+  if (fingerprint) {
+    try { if (fs.readFileSync(stampFile, 'utf8') === stamp) return { ok: true, dir: dest, reused: true }; } catch { /* refresh */ }
+  }
+  const srcAbs = path.resolve(src);
+  const destAbs = path.resolve(dest);
+  if (srcAbs === destAbs || srcAbs.startsWith(destAbs + path.sep)) {
+    return { ok: false, note: `refusing to replace ${dest}: it is (or contains) the lichii source` };
+  }
+  fs.rmSync(dest, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.cpSync(src, dest, {
+    recursive: true,
+    verbatimSymlinks: true,
+    preserveTimestamps: true,
+    filter: (s) => {
+      const rel = path.relative(srcAbs, path.resolve(s));
+      if (rel === '') return true;
+      const parts = rel.split(path.sep);
+      if (parts.includes('.git')) return false;
+      if (parts[0] === 'build' || parts[0] === '.build') return false;
+      return !(parts[0] === 'bin' && parts[1] === '.build');
+    },
+  });
+  for (const patch of patches) {
+    const name = path.basename(patch);
+    for (const extra of [['--check'], []]) {
+      const r = spawnSync('git', ['apply', ...extra, '--whitespace=nowarn', patch], { cwd: dest, env: gitEnv, encoding: 'utf8' });
+      if (r.error || r.status !== 0) {
+        const msg = (r.error ? r.error.message : `${r.stderr || ''}${r.stdout || ''}`).trim();
+        console.log(`  ! patch ${name} ${extra.length ? 'does not apply' : 'failed to apply'}:\n${msg.replace(/^/gm, '    ')}`);
+        fs.rmSync(dest, { recursive: true, force: true });
+        return { ok: false, note: `patch ${name} ${extra.length ? 'does not apply' : 'failed'}: ${msg.split(/\r?\n/)[0]}` };
+      }
+      if (extra.length === 0) console.log(`  applied ${name}`);
+    }
+  }
+  if (fingerprint) fs.writeFileSync(stampFile, stamp);
+  return { ok: true, dir: dest, reused: false };
 }
 
 function hostRid() {
@@ -644,20 +739,38 @@ const CORES = {
       return missing;
     },
     build({ jobs }) {
-      const src = path.join(CORES_DIR, 'lichii');
-      const build = path.join(BUILD_DIR, 'lichii');
+      // Env switches (see patches/README.md): LICHII_SRC, LICHII_BUILD_TYPE, LICHII_BUILD_TAG, LICHII_BUILD_CLI.
+      const buildType = process.env.LICHII_BUILD_TYPE || 'Release';
+      let build;
+      try { build = lichiiBuildDir(ROOT, buildType); } catch (err) { return { ok: false, note: err.message }; }
+      const explicitSrc = process.env.LICHII_SRC ? path.resolve(process.env.LICHII_SRC) : null;
+      let src = explicitSrc ?? path.join(CORES_DIR, 'lichii');
+      if (!fs.existsSync(src)) return { ok: false, note: `lichii source not found: ${src}` };
       const out = path.join(BIN_DIR, 'lichii');
       // Nested submodules are only fetched when Lichii is actually built (plan.md §1); a repo without any is fine.
-      const wanted = nestedSubmodulePaths('lichii');
+      // (An explicit LICHII_SRC is the caller's checkout; they own its submodules.)
+      const wanted = explicitSrc ? [] : nestedSubmodulePaths('lichii');
       if (wanted.length > 0 && !run('git', ['-C', src, 'submodule', 'update', '--init', '--recursive', '--depth', '1'])) {
         return { ok: false, note: 'could not fetch nested submodules' };
+      }
+      // Our patches (patches/lichii/*.patch) are applied to a copy, never to cores/lichii. No patches: build the source as-is.
+      const patches = listPatches(path.join(ROOT, 'patches', 'lichii'));
+      if (patches.length > 0) {
+        console.log(`  applying ${patches.length} patch(es) from patches/lichii to a copy of ${path.relative(ROOT, src) || src}`);
+        const prep = preparePatchedSource({ src, dest: path.join(BUILD_DIR, 'lichii-patched'), patches, ceiling: BUILD_DIR, allowReuse: !explicitSrc });
+        if (!prep.ok) return { ok: false, note: prep.note };
+        if (prep.reused) console.log('  patched copy is up to date (same patches and source); reusing it');
+        src = prep.dir;
       }
       fs.mkdirSync(build, { recursive: true });
       // Flags mirror cores/lichii/.github/workflows/release-binaries.yml (no tests, no room server, no
       // Discord, system Qt), configured out-of-tree. CPM downloads the remaining dependencies at configure time.
-      const cfg = ['-S', src, '-B', build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release', '-DBUILD_TESTING=OFF',
+      const cfg = ['-S', src, '-B', build, '-G', 'Ninja', `-DCMAKE_BUILD_TYPE=${buildType}`, '-DBUILD_TESTING=OFF',
         '-DYUZU_TESTS=OFF', '-DYUZU_CMD=ON', '-DYUZU_ROOM=OFF', '-DYUZU_ROOM_STANDALONE=OFF',
-        '-DYUZU_USE_BUNDLED_QT=OFF', '-DUSE_DISCORD_PRESENCE=OFF', '-DENABLE_UPDATE_CHECKER=OFF'];
+        '-DYUZU_USE_BUNDLED_QT=OFF', '-DUSE_DISCORD_PRESENCE=OFF', '-DENABLE_UPDATE_CHECKER=OFF',
+        `-DLICHII_BUILD_TAG=${process.env.LICHII_BUILD_TAG || 'uemulator-local'}`];
+      if (PLATFORM === 'darwin' && process.arch === 'arm64') cfg.push('-DLICHII_BUILD_PLATFORM=macos-arm64');
+      if (exists('ccache')) cfg.push('-DUSE_CCACHE=ON');
       if (PLATFORM === 'win32') {
         cfg.push('-DYUZU_USE_BUNDLED_SDL3=ON');
         if (process.env.Qt6_ROOT) cfg.push(`-DCMAKE_PREFIX_PATH=${process.env.Qt6_ROOT}`);
@@ -674,7 +787,8 @@ const CORES = {
         }
       }
       if (!run('cmake', cfg)) return { ok: false, note: `configure failed. Needed libraries: ${hint('lichiiLibs')}` };
-      if (!run('cmake', ['--build', build, '--config', 'Release', '--target', 'yuzu', '--parallel', String(jobs)])) {
+      const targets = process.env.LICHII_BUILD_CLI === '1' ? ['yuzu', 'yuzu-cmd'] : ['yuzu'];
+      if (!run('cmake', ['--build', build, '--config', buildType, '--target', ...targets, '--parallel', String(jobs)])) {
         return { ok: false, note: 'build failed' };
       }
       // The yuzu target is named lichii and lands in <build>/bin (lichii.app on macOS).
@@ -686,11 +800,16 @@ const CORES = {
         // ditto preserves the bundle (symlinks, xattrs); then bundle Qt and ad-hoc sign, as the upstream CI does.
         const dest = path.join(out, 'lichii.app');
         if (!run('ditto', [app, dest])) return { ok: false, note: 'could not copy lichii.app' };
+        // eden-cli only exists when LICHII_BUILD_CLI=1 built yuzu-cmd; ship it beside lichii, as the upstream CI does.
+        const cli = path.join(produced, 'eden-cli');
+        const destCli = path.join(dest, 'Contents', 'MacOS', 'eden-cli');
+        const haveCli = fs.existsSync(cli) && run('cp', [cli, destCli]);
         const prefix = capture('brew', ['--prefix', '--installed', 'qt@6']);
         const deploy = prefix ? path.join(prefix, 'bin', 'macdeployqt') : null;
         if (deploy && fs.existsSync(deploy)) {
           const brewPrefix = capture('brew', ['--prefix']);
           const dargs = [dest, '-always-overwrite'];
+          if (haveCli) dargs.push(`-executable=${destCli}`);
           if (brewPrefix) dargs.push(`-libpath=${path.join(brewPrefix, 'lib')}`);
           if (!run(deploy, dargs)) console.log('  ! macdeployqt failed; the app may need Homebrew Qt at runtime');
         }
@@ -883,7 +1002,7 @@ function main() {
   if (rows.some((r) => r.status === 'failed')) process.exitCode = 1;
 }
 
-export { sha256File, assertSafeArchiveListing, assertSymlinksContained };
+export { sha256File, assertSafeArchiveListing, assertSymlinksContained, listPatches, hashPatches, lichiiBuildDir, preparePatchedSource };
 
 // Only run when executed directly, so tests can import the helpers.
 // realpath.native returns the on-disk spelling, so a differently-cased path on Windows still matches.

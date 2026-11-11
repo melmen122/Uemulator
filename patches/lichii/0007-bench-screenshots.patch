@@ -1,0 +1,28 @@
+diff --git a/src/yuzu/main_window.cpp b/src/yuzu/main_window.cpp
+index cff032b..da8ef49 100644
+--- a/src/yuzu/main_window.cpp
++++ b/src/yuzu/main_window.cpp
+@@ -3510,6 +3510,23 @@ void MainWindow::OnLoadComplete() {
+             }
+         });
+     }
++    // EDEN_BENCH_SHOT_SECONDS=<s>[,<s>...]  capture a screenshot <s> seconds after boot (into the
++    // screenshots folder), so two configurations can be compared at the same replay moments.
++    if (const char* const shots = std::getenv("EDEN_BENCH_SHOT_SECONDS")) {
++        const char* cursor = shots;
++        while (*cursor != '\0') {
++            char* end = nullptr;
++            const long seconds = std::strtol(cursor, &end, 10);
++            if (end == cursor) {
++                break;
++            }
++            if (seconds >= 0 && seconds <= 100000) {
++                QTimer::singleShot(static_cast<int>(seconds * 1000), this,
++                                   [this] { OnCaptureScreenshot(); });
++            }
++            cursor = (*end == ',') ? end + 1 : end;
++        }
++    }
+     if (exit_seconds >= 0) {
+         const int exit_ms = static_cast<int>(
+             std::min<long long>(static_cast<long long>(exit_seconds) * 1000, 2'000'000'000LL));

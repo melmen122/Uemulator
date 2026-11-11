@@ -1,0 +1,39 @@
+diff --git a/src/video_core/engines/puller.cpp b/src/video_core/engines/puller.cpp
+index 8d8af23..074b6e1 100644
+--- a/src/video_core/engines/puller.cpp
++++ b/src/video_core/engines/puller.cpp
+@@ -4,7 +4,9 @@
+ // SPDX-FileCopyrightText: 2022 yuzu Emulator Project
+ // SPDX-License-Identifier: GPL-3.0-or-later
+ 
++#include <algorithm>
+ #include <atomic>
++#include <chrono>
+ #include <cstdlib>
+ 
+ #include "common/assert.h"
+@@ -220,8 +222,23 @@ bool Puller::CanResumeAcquire(DmaPusher& dma_pusher) {
+             VideoCommon::Count(stats.latched);
+             return true;
+         }
++        // EDEN_NX2_VALVE_US: the drain interval of the valve above, in microseconds (default
++        // 1000 = 1 ms, as before). Read once; unset, empty or invalid keeps the default.
++        static const std::chrono::microseconds valve_interval = [] {
++            const char* const text = std::getenv("EDEN_NX2_VALVE_US");
++            if (text != nullptr && *text != '\0') {
++                char* end = nullptr;
++                const unsigned long long parsed = std::strtoull(text, &end, 10);
++                if (end != text && *end == '\0') {
++                    return std::chrono::microseconds{
++                        static_cast<std::chrono::microseconds::rep>(
++                            std::min<unsigned long long>(parsed, 60'000'000ULL))};
++                }
++            }
++            return std::chrono::microseconds{1000};
++        }();
+         const auto now = std::chrono::steady_clock::now();
+-        if (now - pending_acquire->last_drain < std::chrono::milliseconds{1}) {
++        if (now - pending_acquire->last_drain < valve_interval) {
+             VideoCommon::Count(stats.polls);
+             VerifyWithoutDrain(dma_pusher, *pending_acquire, check);
+             return false;

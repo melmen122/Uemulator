@@ -1,0 +1,122 @@
+diff --git a/src/yuzu/main_window.cpp b/src/yuzu/main_window.cpp
+index c952d03..cff032b 100644
+--- a/src/yuzu/main_window.cpp
++++ b/src/yuzu/main_window.cpp
+@@ -9,6 +9,9 @@
+ #endif
+ 
+ #include <QSysInfo>
++#include <algorithm>
++#include <cstdlib>
++#include <tuple>
+ #include <boost/algorithm/string/split.hpp>
+ #include "common/fs/path_util.h"
+ #include "common/game_presets.h"
+@@ -3439,6 +3442,27 @@ bool MainWindow::ConfirmShutdownGame() {
+     return true;
+ }
+ 
++namespace {
++// Benchmark hooks: a non-negative integer from the environment, or -1 when unset or invalid.
++int BenchEnvInt(const char* name) {
++    const char* const value = std::getenv(name);
++    if (value == nullptr || *value == '\0') {
++        return -1;
++    }
++    char* end = nullptr;
++    const long long parsed = std::strtoll(value, &end, 10);
++    if (end == value || *end != '\0' || parsed < 0) {
++        return -1;
++    }
++    return static_cast<int>(std::min<long long>(parsed, 2'000'000'000LL));
++}
++
++// True when EDEN_TAS_RECORD_AUTOSTART is set: the recording is then saved without a dialog.
++bool BenchTasRecordEnv() {
++    return BenchEnvInt("EDEN_TAS_RECORD_AUTOSTART") >= 0;
++}
++} // Anonymous namespace
++
+ void MainWindow::OnLoadComplete() {
+     loading_screen->OnLoadComplete();
+ 
+@@ -3447,6 +3471,56 @@ void MainWindow::OnLoadComplete() {
+ 
+     connect(perf_overlay, &PerformanceOverlay::closed, perf_overlay,
+             [this]() { ui->action_Show_Performance_Overlay->setChecked(false); });
++
++    // Benchmark hooks, armed once per process at the first displayed frame (the game has booted
++    // and its loading screen is gone). Each does nothing unless its environment variable is set:
++    //   EDEN_TAS_AUTOSTART=<ms>         start TAS playback of script0-1.txt <ms> after boot
++    //   EDEN_TAS_RECORD_AUTOSTART=<ms>  start TAS recording <ms> after boot (saved without a
++    //                                   dialog when it stops, also when the window is closed)
++    //   EDEN_BENCH_EXIT_SECONDS=<s>     close the window cleanly <s> seconds after boot
++    static bool bench_hooks_armed = false;
++    if (bench_hooks_armed) {
++        return;
++    }
++    bench_hooks_armed = true;
++    const int tas_ms = BenchEnvInt("EDEN_TAS_AUTOSTART");
++    const int record_ms = BenchEnvInt("EDEN_TAS_RECORD_AUTOSTART");
++    const int exit_seconds = BenchEnvInt("EDEN_BENCH_EXIT_SECONDS");
++    if (tas_ms >= 0 || record_ms >= 0) {
++        // The TAS engine ignores every request while this is off (it also loads script0-1.txt
++        // on its first update after it turns on, see Tas::UpdateThread).
++        Settings::values.tas_enable.SetValue(true);
++    }
++    if (tas_ms >= 0) {
++        QTimer::singleShot(tas_ms, this, [this] {
++            // StartStop() toggles: only start when stopped, never stop a running script.
++            // pause_tas_on_load has no reader anywhere, so no other state is needed.
++            if (std::get<0>(input_subsystem->GetTas()->GetStatus()) ==
++                InputCommon::TasInput::TasState::Stopped) {
++                OnTasStartStop();
++            }
++        });
++    }
++    if (record_ms >= 0) {
++        QTimer::singleShot(record_ms, this, [this] {
++            // Record() toggles: only start when not recording yet.
++            if (std::get<0>(input_subsystem->GetTas()->GetStatus()) !=
++                InputCommon::TasInput::TasState::Recording) {
++                OnTasRecord();
++            }
++        });
++    }
++    if (exit_seconds >= 0) {
++        const int exit_ms = static_cast<int>(
++            std::min<long long>(static_cast<long long>(exit_seconds) * 1000, 2'000'000'000LL));
++        QTimer::singleShot(exit_ms, this, [this] {
++            LOG_INFO(Frontend, "EDEN_BENCH_EXIT_SECONDS elapsed, closing");
++            // Skip the "are you sure" question: nobody is there to answer it. closeEvent stops
++            // the emulation and closes again, so the settings and logs flush as on a normal quit.
++            close_pending = true;
++            close();
++        });
++    }
+ }
+ 
+ void MainWindow::OnExecuteProgram(std::size_t program_index) {
+@@ -3957,7 +4031,8 @@ void MainWindow::OnTasRecord() {
+ 
+     const bool is_recording = input_subsystem->GetTas()->Record();
+     if (!is_recording) {
+-        if (Settings::values.tas_show_recording_dialog.GetValue()) {
++        // EDEN_TAS_RECORD_AUTOSTART: save straight to script0-1.txt, no dialog (unset: unchanged).
++        if (Settings::values.tas_show_recording_dialog.GetValue() && !BenchTasRecordEnv()) {
+             is_tas_recording_dialog_active = true;
+ 
+             bool answer = question(this, tr("TAS Recording"), tr("Overwrite file of player 1?"),
+@@ -5518,6 +5593,12 @@ void MainWindow::closeEvent(QCloseEvent* event) {
+         return;
+     }
+     close_pending = true;
++    if (emulation_running && BenchTasRecordEnv() &&
++        std::get<0>(input_subsystem->GetTas()->GetStatus()) ==
++            InputCommon::TasInput::TasState::Recording) {
++        // EDEN_TAS_RECORD_AUTOSTART: a recording still running at quit is saved, not lost.
++        OnTasRecord();
++    }
+     game_list->SetScanEnabled(false);
+     if (boot_in_progress) {
+         event->ignore();

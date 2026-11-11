@@ -1,0 +1,684 @@
+From cb3befcfaa5ff0e0f90319f41628d581d5b2fd03 Mon Sep 17 00:00:00 2001
+From: mstampfli <marc.kurt.stampfli@icloud.com>
+Date: Mon, 9 Nov 2026 17:11:01 +0100
+Subject: [PATCH] buffer_cache: preflush native titles' GPU readbacks, waiting
+ for downloads in flight
+
+Native titles keep a page Preflushable once the guest has read it, so the
+GPU writes there are downloaded at every fence and later reads find the
+data in guest memory instead of flushing.
+
+Such a read must not run ahead of the data:
+- a GPU write to a Preflushable page arms the page's read trap again, so
+  the next read reaches GetFlushArea;
+- a read whose data is downloading with a fence waits for that fence on
+  the reading thread (wait_downloads, WaitForPendingDownloads);
+- a read of writes not committed to a fence yet flushes them, through the
+  async read-back path;
+- the trap a read consumed is forgotten on every path, so the next GPU
+  write arms it again instead of being skipped as still armed.
+
+Read downloads already in flight for an earlier read are waited for as
+before (in_flight). EDEN_NX2_PREFLUSH=0 keeps the flush-on-demand path.
+---
+ src/tests/video_core/buffer_cache_ports.cpp   | 184 +++++++++++++++++-
+ src/video_core/buffer_cache/buffer_cache.h    |  87 ++++++---
+ .../buffer_cache/buffer_cache_base.h          |  34 ++++
+ .../buffer_cache/read_trap_tracker.h          |   5 +
+ src/video_core/gpu.cpp                        |  23 ++-
+ src/video_core/gpu.h                          |   4 +
+ src/video_core/rasterizer_download_area.h     |   3 +
+ src/video_core/rasterizer_interface.h         |   4 +
+ .../renderer_opengl/gl_rasterizer.cpp         |  25 +++
+ .../renderer_opengl/gl_rasterizer.h           |   1 +
+ .../renderer_vulkan/vk_rasterizer.cpp         |  19 ++
+ .../renderer_vulkan/vk_rasterizer.h           |   1 +
+ 12 files changed, 364 insertions(+), 26 deletions(-)
+
+diff --git a/src/tests/video_core/buffer_cache_ports.cpp b/src/tests/video_core/buffer_cache_ports.cpp
+index 4971aff31c..52e5cc27e4 100644
+--- a/src/tests/video_core/buffer_cache_ports.cpp
++++ b/src/tests/video_core/buffer_cache_ports.cpp
+@@ -13,6 +13,7 @@
+ #include <mutex>
+ #include <span>
+ #include <thread>
++#include <utility>
+ #include <vector>
+ #include <catch2/catch_test_macros.hpp>
+ #include <catch2/generators/catch_generators.hpp>
+@@ -365,6 +366,18 @@ struct BufferCacheTestAccess {
+     static const auto& ReadChecks(Cache& cache) {
+         return cache.read_check;
+     }
++    static void Preflushable(Cache& cache, DAddr address, u64 size) {
++        cache.memory_tracker.MarkRegionAsPreflushable(address, size);
++    }
++    static void GpuWrite(Cache& cache, BufferId id, DAddr address, u32 size) {
++        cache.MarkWrittenBuffer(id, address, size);
++    }
++    static bool TrapArmed(Cache& cache, DAddr address, u64 size) {
++        return cache.read_trapped_ranges.IsArmed(address, size);
++    }
++    static void ArmTrap(Cache& cache, DAddr address, u64 size) {
++        cache.ArmReadTraps(address, size);
++    }
+ };
+ 
+ } // namespace VideoCommon
+@@ -1219,13 +1232,15 @@ TEST_CASE("Switch 2 writes to guest memory land read downloads only on GPU-writt
+     gpu_memory.BindRasterizer(&reads);
+     gpu_memory.Map(0x200000, 0x20000, 0x10000, Tegra::PTEKind::PITCH, true);
+     struct Nx2Title {
+-        Nx2Title() {
++        Nx2Title() : was_preflush{std::exchange(VideoCommon::g_nx2_native_preflush, false)} {
+             Tegra::g_nx2_ampere = true;
+         }
+         ~Nx2Title() {
+             Tegra::g_nx2_ampere = false;
+             Tegra::Nx2ClearGpuWrittenPages();
++            VideoCommon::g_nx2_native_preflush = was_preflush;
+         }
++        bool was_preflush;
+     } nx2_title;
+     Access::MarkWritten(*f.cache, id, 0x20000, 0x1000);
+     f.cache->DownloadMemoryForRead(0x20000, 0x1000);
+@@ -1307,14 +1322,18 @@ TEST_CASE("Read download check finds an earlier read's bytes the GPU changed unr
+ }
+ 
+ namespace {
++// A Switch 2 title that flushes reads on demand (EDEN_NX2_PREFLUSH=0): read downloads and early
++// downloads. NativeTitle below covers the default, Preflushable pages.
+ struct Nx2TitleScope {
+-    Nx2TitleScope() {
++    Nx2TitleScope() : was_preflush{std::exchange(VideoCommon::g_nx2_native_preflush, false)} {
+         Tegra::g_nx2_ampere = true;
+     }
+     ~Nx2TitleScope() {
+         Tegra::g_nx2_ampere = false;
+         Tegra::Nx2ClearGpuWrittenPages();
++        VideoCommon::g_nx2_native_preflush = was_preflush;
+     }
++    bool was_preflush;
+ };
+ 
+ /// A dispatch that writes `value` over [address, address + size) of the buffer at 0x20000.
+@@ -2238,3 +2257,164 @@ TEST_CASE("Async read-back counts the reading thread's and the GPU side's waits
+     REQUIRE(counters.gpu_side_waits.load() - gpu_side_waits == 1);
+     REQUIRE(f.runtime.host_read_waits == 2);
+ }
++
++namespace {
++
++// Native titles read GPU-written pages that downloads keep in guest memory (Preflushable).
++struct NativeTitle {
++    NativeTitle()
++        : was_native{Tegra::g_nx2_ampere.exchange(true)},
++          was_preflush{std::exchange(VideoCommon::g_nx2_native_preflush, true)} {}
++    ~NativeTitle() {
++        Tegra::g_nx2_ampere.store(was_native);
++        VideoCommon::g_nx2_native_preflush = was_preflush;
++    }
++    bool was_native;
++    bool was_preflush;
++};
++
++} // namespace
++
++TEST_CASE("Native reads of a preflushable page never see GPU data before its download lands",
++          "[buffer_ports]") {
++    Fixture f;
++    NativeTitle native;
++    const auto id = Access::Add(*f.cache, 0x20000, 0x10000);
++    Access::Preflushable(*f.cache, 0x20000, 0x1000);
++    REQUIRE(f.cache->GetFlushArea(0x20010, 4)->preemtive);
++
++    // Queued for the next fence: the read flushes it.
++    std::ranges::fill(Access::Get(*f.cache, id).bytes, 0x56);
++    Access::GpuWrite(*f.cache, id, 0x20000, 0x100);
++    auto area = f.cache->GetFlushArea(0x20010, 4);
++    REQUIRE_FALSE(area->preemtive);
++    REQUIRE_FALSE(area->wait_downloads);
++
++    // Downloading with a fence: the read waits for it.
++    f.cache->CommitAsyncFlushes();
++    area = f.cache->GetFlushArea(0x20010, 4);
++    REQUIRE(area->preemtive);
++    REQUIRE(area->wait_downloads);
++    REQUIRE(f.cache->IsDownloadInFlight(0x20000, 0x1000));
++    REQUIRE(f.bytes[0x10010] == 0);
++
++    // The fence passes: the data is in guest memory and the read goes ahead.
++    const u64 landed = f.cache->LandedDownloads();
++    f.runtime.Finish();
++    f.cache->PopAsyncFlushes();
++    REQUIRE(f.cache->LandedDownloads() == landed + 1);
++    REQUIRE_FALSE(f.cache->IsDownloadInFlight(0x20000, 0x1000));
++    area = f.cache->GetFlushArea(0x20010, 4);
++    REQUIRE(area->preemtive);
++    REQUIRE_FALSE(area->wait_downloads);
++    REQUIRE(f.bytes[0x10010] == 0x56);
++    REQUIRE(f.bytes[0x100ff] == 0x56);
++    REQUIRE(f.bytes[0x10100] == 0);
++}
++
++TEST_CASE("A GPU write over a download in flight makes native reads flush instead of wait",
++          "[buffer_ports]") {
++    Fixture f;
++    NativeTitle native;
++    const auto id = Access::Add(*f.cache, 0x20000, 0x10000);
++    Access::Preflushable(*f.cache, 0x20000, 0x1000);
++    Access::GpuWrite(*f.cache, id, 0x20000, 0x100);
++    f.cache->CommitAsyncFlushes();
++    REQUIRE(f.cache->GetFlushArea(0x20010, 4)->wait_downloads);
++    // The download taken holds older bytes than this write: waiting for it is not enough.
++    Access::GpuWrite(*f.cache, id, 0x20000, 0x100);
++    REQUIRE_FALSE(f.cache->IsDownloadInFlight(0x20000, 0x1000));
++    const auto area = f.cache->GetFlushArea(0x20010, 4);
++    REQUIRE_FALSE(area->preemtive);
++    REQUIRE_FALSE(area->wait_downloads);
++}
++
++TEST_CASE("Other titles read preflushable pages as guest memory holds them", "[buffer_ports]") {
++    Fixture f;
++    const bool was_native = Tegra::g_nx2_ampere.exchange(false);
++    const auto id = Access::Add(*f.cache, 0x20000, 0x10000);
++    Access::Preflushable(*f.cache, 0x20000, 0x1000);
++    Access::GpuWrite(*f.cache, id, 0x20000, 0x100);
++    auto area = f.cache->GetFlushArea(0x20010, 4);
++    REQUIRE(area->preemtive);
++    REQUIRE_FALSE(area->wait_downloads);
++    f.cache->CommitAsyncFlushes();
++    area = f.cache->GetFlushArea(0x20010, 4);
++    REQUIRE(area->preemtive);
++    REQUIRE_FALSE(area->wait_downloads);
++    Tegra::g_nx2_ampere.store(was_native);
++}
++
++TEST_CASE("Readers waiting for downloads wake when a fence's downloads land", "[buffer_ports]") {
++    Fixture f;
++    NativeTitle native;
++    const auto id = Access::Add(*f.cache, 0x20000, 0x10000);
++    Access::Preflushable(*f.cache, 0x20000, 0x1000);
++    Access::GpuWrite(*f.cache, id, 0x20000, 0x100);
++    f.cache->CommitAsyncFlushes();
++    const u64 seen = f.cache->LandedDownloads();
++    std::thread fencing([&] {
++        std::this_thread::sleep_for(std::chrono::milliseconds{20});
++        f.runtime.Finish();
++        f.cache->PopAsyncFlushes();
++    });
++    const auto start = std::chrono::steady_clock::now();
++    f.cache->WaitForLandedDownloads(seen, std::chrono::seconds{10});
++    const auto waited = std::chrono::steady_clock::now() - start;
++    fencing.join();
++    REQUIRE(waited < std::chrono::seconds{5});
++    REQUIRE(f.cache->LandedDownloads() == seen + 1);
++
++    // Nothing lands: the wait ends at its timeout.
++    const auto idle_start = std::chrono::steady_clock::now();
++    f.cache->WaitForLandedDownloads(f.cache->LandedDownloads(), std::chrono::milliseconds{20});
++    const auto idle = std::chrono::steady_clock::now() - idle_start;
++    REQUIRE(idle >= std::chrono::milliseconds{15});
++    REQUIRE(idle < std::chrono::seconds{5});
++}
++
++TEST_CASE("Native GPU writes to a preflushable page arm its read trap until a read consumes it",
++          "[buffer_ports]") {
++    Fixture f;
++    NativeTitle native;
++    const auto id = Access::Add(*f.cache, 0x20000, 0x10000);
++    Access::Preflushable(*f.cache, 0x20000, 0x1000);
++    REQUIRE_FALSE(Access::TrapArmed(*f.cache, 0x20000, 0x1000));
++    // A read before the download lands must reach GetFlushArea.
++    Access::GpuWrite(*f.cache, id, 0x20000, 0x100);
++    REQUIRE(Access::TrapArmed(*f.cache, 0x20000, 0x1000));
++    // The read consumed the core's trap: the next write arms it again.
++    (void)f.cache->GetFlushArea(0x20010, 4);
++    REQUIRE_FALSE(Access::TrapArmed(*f.cache, 0x20000, 0x1000));
++    Access::GpuWrite(*f.cache, id, 0x20000, 0x100);
++    REQUIRE(Access::TrapArmed(*f.cache, 0x20000, 0x1000));
++    // Pages that are not Preflushable keep their own handling.
++    REQUIRE_FALSE(Access::TrapArmed(*f.cache, 0x21000, 0x1000));
++}
++
++TEST_CASE("Other titles' GPU writes to preflushable pages arm no read traps", "[buffer_ports]") {
++    Fixture f;
++    const bool was_native = Tegra::g_nx2_ampere.exchange(false);
++    const auto id = Access::Add(*f.cache, 0x20000, 0x10000);
++    Access::Preflushable(*f.cache, 0x20000, 0x1000);
++    Access::GpuWrite(*f.cache, id, 0x20000, 0x100);
++    REQUIRE_FALSE(Access::TrapArmed(*f.cache, 0x20000, 0x1000));
++    Tegra::g_nx2_ampere.store(was_native);
++}
++
++TEST_CASE("A native page's first read forgets its trap so the next write arms it again",
++          "[buffer_ports]") {
++    Fixture f;
++    NativeTitle native;
++    const auto id = Access::Add(*f.cache, 0x20000, 0x10000);
++    // A GPU write to a page that is not Preflushable yet arms its trap.
++    Access::GpuWrite(*f.cache, id, 0x20000, 0x100);
++    Access::ArmTrap(*f.cache, 0x20000, 0x100);
++    REQUIRE(Access::TrapArmed(*f.cache, 0x20000, 0x1000));
++    // The first read flushes, marks the page Preflushable and consumed the trap.
++    REQUIRE_FALSE(f.cache->GetFlushArea(0x20010, 4)->preemtive);
++    REQUIRE_FALSE(Access::TrapArmed(*f.cache, 0x20000, 0x1000));
++    // The next write must reach the core again, not be skipped as still armed.
++    Access::GpuWrite(*f.cache, id, 0x20000, 0x100);
++    REQUIRE(Access::TrapArmed(*f.cache, 0x20000, 0x1000));
++}
+diff --git a/src/video_core/buffer_cache/buffer_cache.h b/src/video_core/buffer_cache/buffer_cache.h
+index dcb049da8b..32659105ee 100644
+--- a/src/video_core/buffer_cache/buffer_cache.h
++++ b/src/video_core/buffer_cache/buffer_cache.h
+@@ -334,13 +334,36 @@ std::optional<VideoCore::RasterizerDownloadArea> BufferCache<P>::GetFlushArea(DA
+     DAddr device_addr_end_aligned = Common::AlignUp(device_addr + size, Core::DEVICE_PAGESIZE);
+     area->start_address = device_addr_start_aligned;
+     area->end_address = device_addr_end_aligned;
++    const bool native = Tegra::g_nx2_ampere.load(std::memory_order_relaxed);
++    const u64 aligned_size = device_addr_end_aligned - device_addr_start_aligned;
+     if (memory_tracker.IsRegionPreflushable(device_addr, size)) {
+         // Fence downloads keep it, once the first read's download is in guest memory.
+         area->in_flight = std::ranges::any_of(read_downloads, [&](const ReadDownload& download) {
+-            return download.write_ranges.Intersects(
+-                device_addr_start_aligned, device_addr_end_aligned - device_addr_start_aligned);
++            return download.write_ranges.Intersects(device_addr_start_aligned, aligned_size);
+         });
+         area->preemtive = !area->in_flight;
++        // Native titles never read GPU data before it lands: a read while it is downloading with
++        // a fence waits for that fence (on the reading thread, not the GPU thread), and a read of
++        // GPU writes not committed to a fence yet flushes them. Other titles read guest memory
++        // as it is, like upstream yuzu.
++        // The core consumed this read's trap before asking: forget it, so the next GPU write
++        // arms it again instead of being skipped as still armed.
++        if (native) {
++            read_trapped_ranges.Subtract(device_addr_start_aligned, aligned_size);
++        }
++        if (native && !area->in_flight &&
++            IsRegionGpuModified(device_addr_start_aligned, aligned_size)) {
++            const auto queued = [&](const Common::RangeSet<DAddr>& ranges) {
++                return ranges.Intersects(device_addr_start_aligned, aligned_size);
++            };
++            if (queued(uncommitted_gpu_modified_ranges) ||
++                std::ranges::any_of(committed_gpu_modified_ranges, queued) ||
++                !IsDownloadInFlight(device_addr_start_aligned, aligned_size)) {
++                area->preemtive = false;
++            } else {
++                area->wait_downloads = true;
++            }
++        }
+         return area;
+     };
+     area->preemtive = !IsRegionGpuModified(device_addr_start_aligned,
+@@ -373,32 +396,25 @@ std::optional<VideoCore::RasterizerDownloadArea> BufferCache<P>::GetFlushArea(DA
+     if (check_early) {
+         area->preemtive = false;
+     }
+-    // A preflushable mark persists and downloads later GPU writes at every fence. Native titles
+-    // instead keep read traps and flush on demand.
+-    const bool preflush = !Tegra::g_nx2_ampere.load(std::memory_order_relaxed);
++    // A preflushable mark persists and downloads later GPU writes at every fence, so later reads
++    // find the data in guest memory or wait for its fence (above) instead of flushing.
++    // EDEN_NX2_PREFLUSH=0: native titles keep read traps and flush on demand instead
++    // (g_nx2_native_preflush).
++    const bool preflush = !native || g_nx2_native_preflush;
++    // The core consumed this read's trap before GetFlushArea (or keeps an area with no mark).
++    // Forget it either way, so the next GPU write here really arms the core again instead of
++    // being skipped by the deduplication cache, also once the read marks the page Preflushable.
++    read_trapped_ranges.Subtract(device_addr_start_aligned, aligned_size);
+     if (!area->preemtive) {
+         if (Nx2DownloadTrace::g_enabled) [[unlikely]] {
+-            Nx2DownloadTrace::Marked(device_addr_start_aligned,
+-                                     device_addr_end_aligned - device_addr_start_aligned, preflush);
++            Nx2DownloadTrace::Marked(device_addr_start_aligned, aligned_size, preflush);
+         }
+         if (preflush) {
+-            memory_tracker.MarkRegionAsPreflushable(
+-                device_addr_start_aligned, device_addr_end_aligned - device_addr_start_aligned);
+-        } else {
+-            if constexpr (USE_MEMORY_MAPS) {
+-                cpu_read_ranges.Add(area->start_address, area->end_address - area->start_address);
+-                download_cpu_read_ranges = true;
+-            }
+-            // The core consumed this trap before GetFlushArea. Forget it so the next GPU write
+-            // really rearms the core instead of being skipped by the deduplication cache.
+-            read_trapped_ranges.Subtract(
+-                device_addr_start_aligned, device_addr_end_aligned - device_addr_start_aligned);
++            memory_tracker.MarkRegionAsPreflushable(device_addr_start_aligned, aligned_size);
++        } else if constexpr (USE_MEMORY_MAPS) {
++            cpu_read_ranges.Add(area->start_address, area->end_address - area->start_address);
++            download_cpu_read_ranges = true;
+         }
+-    } else {
+-        // The core keeps this area and has no mark. The next GPU write here must arm the range
+-        // again, which ends the area and sets the trap.
+-        read_trapped_ranges.Subtract(device_addr_start_aligned,
+-                                     device_addr_end_aligned - device_addr_start_aligned);
+     }
+     return area;
+ }
+@@ -2176,6 +2192,31 @@ void BufferCache<P>::PopAsyncBuffers() {
+     async_buffers.pop_front();
+     pending_downloads.pop_front();
+     pending_download_ranges.pop_front();
++    {
++        std::scoped_lock lock{landed_mutex};
++        ++landed_downloads;
++    }
++    landed_cv.notify_all();
++}
++
++template <class P>
++bool BufferCache<P>::IsDownloadInFlight(DAddr addr, u64 size) const {
++    return std::ranges::any_of(pending_download_ranges,
++                               [&](const Common::RangeSet<DAddr>& ranges) {
++                                   return ranges.Intersects(addr, size);
++                               });
++}
++
++template <class P>
++u64 BufferCache<P>::LandedDownloads() {
++    std::scoped_lock lock{landed_mutex};
++    return landed_downloads;
++}
++
++template <class P>
++void BufferCache<P>::WaitForLandedDownloads(u64 seen, std::chrono::microseconds timeout) {
++    std::unique_lock lock{landed_mutex};
++    landed_cv.wait_for(lock, timeout, [&] { return landed_downloads != seen; });
+ }
+ 
+ template <class P>
+diff --git a/src/video_core/buffer_cache/buffer_cache_base.h b/src/video_core/buffer_cache/buffer_cache_base.h
+index d5444a963d..971ffa5dc7 100644
+--- a/src/video_core/buffer_cache/buffer_cache_base.h
++++ b/src/video_core/buffer_cache/buffer_cache_base.h
+@@ -11,6 +11,7 @@
+ #include <array>
+ #include <bit>
+ #include <chrono>
++#include <condition_variable>
+ #include <functional>
+ #include <memory>
+ #include <mutex>
+@@ -45,6 +46,7 @@
+ #include "video_core/engines/kepler_compute.h"
+ #include "video_core/engines/maxwell_3d.h"
+ #include "video_core/memory_manager.h"
++#include "video_core/nx2.h"
+ #include "video_core/nx2_download_trace.h"
+ #include "video_core/nx2_async_readback.h"
+ #include "video_core/nx2_fast_draw.h"
+@@ -54,6 +56,15 @@
+ 
+ namespace VideoCommon {
+ 
++/// Whether native titles mark the pages the guest CPU read Preflushable, so their GPU writes are
++/// downloaded at every fence (BufferCache::GetFlushArea). EDEN_NX2_PREFLUSH=0 keeps read traps and
++/// flushes on demand instead, with early downloads for pages read after each write. Read once at
++/// startup; tests set it per case.
++inline bool g_nx2_native_preflush = [] {
++    const char* value = std::getenv("EDEN_NX2_PREFLUSH");
++    return value == nullptr || value[0] != '0';
++}();
++
+ using BufferId = Common::SlotId;
+ 
+ using VideoCore::Surface::PixelFormat;
+@@ -416,6 +427,16 @@ class BufferCache : public VideoCommon::ChannelSetupCaches<BufferCacheChannelInf
+ 
+     /// Pop asynchronous downloads
+     void PopAsyncFlushes();
++
++    /// Whether GPU data in the range is downloading with a fence not released yet (not in guest
++    /// memory yet). The caller holds the mutex.
++    [[nodiscard]] bool IsDownloadInFlight(DAddr addr, u64 size) const;
++
++    /// Fences whose downloads have reached guest memory so far.
++    [[nodiscard]] u64 LandedDownloads();
++
++    /// Waits until another fence's downloads land (LandedDownloads passes `seen`) or `timeout`.
++    void WaitForLandedDownloads(u64 seen, std::chrono::microseconds timeout);
+     void PopAsyncBuffers();
+ 
+     bool DMACopy(GPUVAddr src_address, GPUVAddr dest_address, u64 amount);
+@@ -859,6 +880,13 @@ class BufferCache : public VideoCommon::ChannelSetupCaches<BufferCacheChannelInf
+             const char* value = std::getenv("EDEN_NX2_EXACT_PREFLUSH");
+             return value == nullptr || value[0] != '0';
+         }();
++        // Native titles: until this write's download lands, a guest read of a Preflushable page
++        // must reach GetFlushArea, which waits for the download or flushes it. Arming its read
++        // trap again also drops the cores' cached read areas (reactive flushing).
++        if (Tegra::g_nx2_ampere.load(std::memory_order_relaxed) &&
++            memory_tracker.IsRegionPreflushable(device_addr, size)) {
++            ArmReadTraps(device_addr, size);
++        }
+         if (AsyncBufferDownloads()) {
+             uncommitted_gpu_modified_ranges.Add(device_addr, size);
+             return;
+@@ -891,6 +919,7 @@ class BufferCache : public VideoCommon::ChannelSetupCaches<BufferCacheChannelInf
+ 
+     /// GPU writes that are not downloaded at fences: trap the guest CPU's next read of their
+     /// pages, which flushes them on demand (or marks them Preflushable with preflushing enabled).
++    /// Native titles also arm it for Preflushable pages until their download lands.
+     void ArmReadTraps(DAddr device_addr, u64 size) {
+         const DAddr begin = Common::AlignDown(device_addr, Core::DEVICE_PAGESIZE);
+         const DAddr end = Common::AlignUp(device_addr + size, Core::DEVICE_PAGESIZE);
+@@ -916,6 +945,11 @@ class BufferCache : public VideoCommon::ChannelSetupCaches<BufferCacheChannelInf
+     /// fence pops. A write to a range after a download was taken removes it from that download
+     /// (and every other pending one): its bytes are older than the write.
+     std::deque<Common::RangeSet<DAddr>> pending_download_ranges;
++    /// Counts fences whose downloads reached guest memory (PopAsyncBuffers); guest reads that
++    /// found their data downloading wait on landed_cv for it (WaitForLandedDownloads).
++    std::mutex landed_mutex;
++    std::condition_variable landed_cv;
++    u64 landed_downloads = 0;
+     PendingCpuWrites pending_cpu_writes;
+     std::optional<Async_Buffer> current_buffer;
+ 
+diff --git a/src/video_core/buffer_cache/read_trap_tracker.h b/src/video_core/buffer_cache/read_trap_tracker.h
+index 455b1fc6a4..4dd28f447c 100644
+--- a/src/video_core/buffer_cache/read_trap_tracker.h
++++ b/src/video_core/buffer_cache/read_trap_tracker.h
+@@ -41,6 +41,11 @@ class ReadTrapTracker {
+         return Arm(address, size, [](DAddr, u64) {});
+     }
+ 
++    /// Whether any part of the range is armed.
++    [[nodiscard]] bool IsArmed(DAddr address, u64 size) const {
++        return ranges.Intersects(address, size);
++    }
++
+     /// A CPU read consumes the core's trap; unmapping also forgets the range.
+     void Subtract(DAddr address, u64 size) {
+         ranges.Subtract(address, size);
+diff --git a/src/video_core/gpu.cpp b/src/video_core/gpu.cpp
+index c044fde73f..953750e28b 100644
+--- a/src/video_core/gpu.cpp
++++ b/src/video_core/gpu.cpp
+@@ -179,6 +179,11 @@ struct GPU::Impl {
+         WaitForSyncOperation(fence);
+     }
+ 
++    /// Wakes the GPU thread so it runs queued sync operations (as OnCPURead does after its request).
++    void TickGpuThread() {
++        gpu_thread.TickGPU(is_async);
++    }
++
+     /// Tick pending requests within the GPU.
+     void TickWork() {
+         std::unique_lock lck{sync_request_mutex};
+@@ -265,7 +270,19 @@ struct GPU::Impl {
+     }
+ 
+     VideoCore::RasterizerDownloadArea OnCPURead(DAddr addr, u64 size) {
+-        auto raster_area = renderer->ReadRasterizer()->GetFlushArea(addr, size);
++        auto* const rasterizer = renderer->ReadRasterizer();
++        auto raster_area = rasterizer->GetFlushArea(addr, size);
++        // GPU data on its way with a fence: wait for it rather than read guest memory before it
++        // lands, then look again (the GPU may have written the range since).
++        for (u32 waits = 0; raster_area.wait_downloads && waits < 8; ++waits) {
++            rasterizer->WaitForPendingDownloads(raster_area.start_address,
++                                                raster_area.end_address - raster_area.start_address);
++            raster_area = rasterizer->GetFlushArea(addr, size);
++        }
++        if (raster_area.wait_downloads) {
++            // Still downloading after the waits: flush it like data not queued yet.
++            raster_area.preemtive = false;
++        }
+         if (raster_area.preemtive) {
+             return raster_area;
+         }
+@@ -526,6 +543,10 @@ void GPU::TickWork() {
+     impl->TickWork();
+ }
+ 
++void GPU::TickGpuThread() {
++    impl->TickGpuThread();
++}
++
+ /// Gets a mutable reference to the Host1x interface
+ Host1x::Host1x& GPU::Host1x() {
+     return impl->system.Host1x();
+diff --git a/src/video_core/gpu.h b/src/video_core/gpu.h
+index 55988006d7..76c21e4966 100644
+--- a/src/video_core/gpu.h
++++ b/src/video_core/gpu.h
+@@ -182,6 +182,10 @@ class GPU final {
+     /// Tick pending requests within the GPU.
+     void TickWork();
+ 
++    /// Any thread: wakes the GPU thread to run queued sync operations (RunOnGpuThread) even
++    /// while it has no commands to process.
++    void TickGpuThread();
++
+     /// Gets a mutable reference to the Host1x interface
+     [[nodiscard]] Host1x::Host1x& Host1x();
+ 
+diff --git a/src/video_core/rasterizer_download_area.h b/src/video_core/rasterizer_download_area.h
+index 27d5512e38..065f950d94 100644
+--- a/src/video_core/rasterizer_download_area.h
++++ b/src/video_core/rasterizer_download_area.h
+@@ -22,6 +22,9 @@ struct RasterizerDownloadArea {
+     /// What guest memory lacks there is on its way for an earlier read: nothing to flush, only to
+     /// wait for (RasterizerInterface::FinishRead).
+     bool in_flight{};
++    /// GPU data for the area is downloading with a fence that has not been released: the read
++    /// waits for it (RasterizerInterface::WaitForPendingDownloads) and asks again.
++    bool wait_downloads{};
+ };
+ 
+ /// Downloads for guest CPU reads that are submitted but not yet written to guest memory
+diff --git a/src/video_core/rasterizer_interface.h b/src/video_core/rasterizer_interface.h
+index bfc7954a24..c9db83f3b3 100644
+--- a/src/video_core/rasterizer_interface.h
++++ b/src/video_core/rasterizer_interface.h
+@@ -173,6 +173,10 @@ class RasterizerInterface {
+ 
+     virtual RasterizerDownloadArea GetFlushArea(DAddr addr, u64 size) = 0;
+ 
++    /// Waits until GPU data for the range that is downloading with a fence reaches guest memory
++    /// (GetFlushArea set wait_downloads).
++    virtual void WaitForPendingDownloads([[maybe_unused]] DAddr addr, [[maybe_unused]] u64 size) {}
++
+     /// Whether reports in the range wait for host query results not yet in guest memory.
+     [[nodiscard]] virtual bool HasPendingQueries([[maybe_unused]] DAddr addr,
+                                                  [[maybe_unused]] u64 size) {
+diff --git a/src/video_core/renderer_opengl/gl_rasterizer.cpp b/src/video_core/renderer_opengl/gl_rasterizer.cpp
+index bb9eea8c70..c0097f6c0d 100644
+--- a/src/video_core/renderer_opengl/gl_rasterizer.cpp
++++ b/src/video_core/renderer_opengl/gl_rasterizer.cpp
+@@ -411,6 +411,9 @@ void RasterizerOpenGL::DispatchCompute() {
+     if (pipeline->UsesLocalMemory()) {
+         program_manager.LocalMemoryWarmup();
+     }
++    // Like draws (and Vulkan's dispatches): guest threads read the caches' state under these
++    // locks (GetFlushArea, WaitForPendingDownloads) while a dispatch binds and marks buffers.
++    std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
+     pipeline->SetEngine(kepler_compute, gpu_memory);
+     pipeline->Configure();
+     const auto& qmd{kepler_compute->launch_description};
+@@ -548,6 +551,28 @@ VideoCore::RasterizerDownloadArea RasterizerOpenGL::GetFlushArea(DAddr addr, u64
+     return new_area;
+ }
+ 
++void RasterizerOpenGL::WaitForPendingDownloads(DAddr addr, u64 size) {
++    // Bounded: the caller flushes the range if its fence never lands.
++    for (u32 attempt = 0; attempt < 200; ++attempt) {
++        const u64 seen = buffer_cache.LandedDownloads();
++        {
++            std::scoped_lock lock{buffer_cache.mutex};
++            if (!buffer_cache.IsDownloadInFlight(addr, size)) {
++                return;
++            }
++        }
++        // OpenGL has no fencing thread: fences the host GPU passed are only released (and their
++        // downloads land) when the GPU thread checks them. Ask it to, between draws (TickWork);
++        // SignalOrdering releases the signaled fences without waiting for the others.
++        if (attempt % 16 == 0) {
++            (void)gpu.RunOnGpuThread([this] { fence_manager.SignalOrdering(); });
++            // The GPU thread may be idle (the guest waits for this data before sending more).
++            gpu.TickGpuThread();
++        }
++        buffer_cache.WaitForLandedDownloads(seen, std::chrono::milliseconds{1});
++    }
++}
++
+ void RasterizerOpenGL::PrepareRegionWrite(DAddr addr, u64 size, VideoCommon::CacheType which) {
+     if (addr == 0 || size == 0 || False(which & VideoCommon::CacheType::BufferCache)) {
+         return;
+diff --git a/src/video_core/renderer_opengl/gl_rasterizer.h b/src/video_core/renderer_opengl/gl_rasterizer.h
+index 70b161f558..6e8e8906f5 100644
+--- a/src/video_core/renderer_opengl/gl_rasterizer.h
++++ b/src/video_core/renderer_opengl/gl_rasterizer.h
+@@ -97,6 +97,7 @@ class RasterizerOpenGL : public VideoCore::RasterizerInterface,
+     bool MustFlushRegion(DAddr addr, u64 size,
+                          VideoCommon::CacheType which = VideoCommon::CacheType::All) override;
+     VideoCore::RasterizerDownloadArea GetFlushArea(PAddr addr, u64 size) override;
++    void WaitForPendingDownloads(DAddr addr, u64 size) override;
+     void InvalidateRegion(DAddr addr, u64 size,
+                           VideoCommon::CacheType which = VideoCommon::CacheType::All) override;
+     void PrepareRegionWrite(DAddr addr, u64 size, VideoCommon::CacheType which) override;
+diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.cpp b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+index 23c753049b..1ab0f762e3 100644
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@ -2430,6 +2430,25 @@ VideoCore::RasterizerDownloadArea RasterizerVulkan::GetFlushArea(DAddr addr, u64
+     return new_area;
+ }
+ 
++void RasterizerVulkan::WaitForPendingDownloads(DAddr addr, u64 size) {
++    // Bounded: a fence the host GPU never passes must not hang the reading guest thread (the
++    // caller then flushes the range instead).
++    for (u32 attempt = 0; attempt < 200; ++attempt) {
++        const u64 seen = buffer_cache.LandedDownloads();
++        {
++            std::scoped_lock lock{buffer_cache.mutex};
++            if (!buffer_cache.IsDownloadInFlight(addr, size)) {
++                return;
++            }
++        }
++        // The fence's commands may wait in a deferred submission only the split's back makes.
++        if (attempt == 0 && VideoCommon::GpuSplit::Get().BackRunning()) {
++            VideoCommon::GpuSplit::Get().RequestIdleHook();
++        }
++        buffer_cache.WaitForLandedDownloads(seen, std::chrono::milliseconds{1});
++    }
++}
++
+ void RasterizerVulkan::PrepareRegionWrite(DAddr addr, u64 size, VideoCommon::CacheType which) {
+     if (addr == 0 || size == 0 || False(which & VideoCommon::CacheType::BufferCache)) {
+         return;
+diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.h b/src/video_core/renderer_vulkan/vk_rasterizer.h
+index afc34cbfbf..a024c33d9e 100644
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.h
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.h
+@@ -117,6 +117,7 @@ class RasterizerVulkan final : public VideoCore::RasterizerInterface,
+     bool MustFlushRegion(DAddr addr, u64 size,
+                          VideoCommon::CacheType which = VideoCommon::CacheType::All) override;
+     VideoCore::RasterizerDownloadArea GetFlushArea(DAddr addr, u64 size) override;
++    void WaitForPendingDownloads(DAddr addr, u64 size) override;
+     bool HasPendingQueries(DAddr addr, u64 size) override;
+     bool HoldsQueries(DAddr addr, u64 size) override;
+     void InvalidateRegion(DAddr addr, u64 size,
