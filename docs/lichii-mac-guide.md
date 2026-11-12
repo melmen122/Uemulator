@@ -23,7 +23,7 @@ section 7, so you can recognise it.
 | Shader cache | `~/.cache/eden/` (can be 300+ MB; it makes later runs smoother) |
 | Log of the last run | `~/.local/share/eden/log/eden_log.txt` (previous run: `eden_log.txt.old.txt`) |
 | Crash dumps | `~/.local/share/eden/crash_dumps/` |
-| Lichii that Uemulator launches | `~/Library/Application Support/Uemulator/emulators/lichii/` |
+| Lichii that Uemulator launches | `~/Library/Application Support/Uemulator/emulators/lichii-launcher/lichii-launch` (a 3-line script that sets `SDL_JOYSTICK_MFI=0` and runs the official `nx2-build-125` in `.../emulators/lichii/`) |
 | A development build of Lichii (this repo) | `bin/lichii/` |
 
 Always quit Lichii with **Cmd+Q**: the log and settings are only written completely on a normal quit.

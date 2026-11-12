@@ -12,7 +12,7 @@ const MAX_LINES_PER_FLUSH = 100;
 const MAX_QUEUE = 1000;
 const KILL_GRACE_MS = 5000;
 // env accepted from adapters (never from the renderer). Anything else is ignored.
-const ENV_ALLOWLIST = Object.freeze(['WINEPREFIX', 'WINEDEBUG', 'WINEDLLOVERRIDES']);
+const ENV_ALLOWLIST = Object.freeze(['WINEPREFIX', 'WINEDEBUG', 'WINEDLLOVERRIDES', 'SDL_JOYSTICK_MFI']);
 const MAX_ENV_VALUE_LEN = 4096;
 // After the child exits, wait this long for its stdio to close before reporting the exit anyway.
 // wine leaves a `wineserver` behind that inherits the pipes for a few seconds, which delays 'close'.

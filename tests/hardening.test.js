@@ -344,6 +344,12 @@ test('processes.start passes allowlisted env merged over process.env, shell stay
   assert.deepEqual(c.args, ['/p/Project64.exe', '/r/x.z64']);
 });
 
+test('processes.start passes SDL_JOYSTICK_MFI (Lichii controller fix) and nothing else SDL-ish', async () => {
+  const c = await startWith({ SDL_JOYSTICK_MFI: '0', SDL_VIDEODRIVER: 'evil' });
+  assert.equal(c.o.env.SDL_JOYSTICK_MFI, '0');
+  assert.notEqual(c.o.env.SDL_VIDEODRIVER, 'evil');
+});
+
 test('processes.start ignores non-allowlisted env keys and never passes loader-injection vars', async () => {
   const c = await startWith(
     { WINEDEBUG: '-all', LD_PRELOAD: '/evil.so', DYLD_INSERT_LIBRARIES: '/evil.dylib', PATH: '/evil', WINELOADER: '/evil' },

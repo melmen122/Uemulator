@@ -87,6 +87,13 @@ test('lichii: rejects empty/NUL/non-string path and missing exe', () => {
   assert.throws(() => lichii.buildArgs('/r/x.nsp'));
 });
 
+test('lichii: macOS launches turn SDL\'s MFi backend off (controller visibility); other platforms add no env', () => {
+  const exe = '/Applications/lichii.app/Contents/MacOS/lichii';
+  assert.deepEqual(lichii.buildArgs('/r/x.nsp', { exe, platform: 'darwin' }).env, { SDL_JOYSTICK_MFI: '0' });
+  assert.equal(lichii.buildArgs('/r/x.nsp', { exe: '/usr/bin/lichii', platform: 'linux' }).env, undefined);
+  assert.equal(lichii.buildArgs('C:\\l\\lichii.exe', { exe: 'C:\\l\\lichii.exe', platform: 'win32' }).env, undefined);
+});
+
 test('lichii: buildArgs is pure and returns no env', () => {
   const o = { exe: '/usr/bin/lichii', fullscreen: true };
   const r = lichii.buildArgs('/r/x.nsp', o);

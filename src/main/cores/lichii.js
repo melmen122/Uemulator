@@ -44,7 +44,12 @@ module.exports = {
     const args = [];
     if (opts.fullscreen) args.push('-f');
     args.push('-g', romPath);
-    return { command: exe, args };
+    const out = { command: exe, args };
+    // macOS: SDL's GameController ("MFi") backend swallows generic Bluetooth pads that report VID/PID 0
+    // (e.g. Switch Pro clones such as the "Lic3 Pro Controller"), so they vanish from Lichii's
+    // Settings > Controls. SDL reads this hint from the environment; turning it off lists them via IOKit.
+    if (opts.platform === 'darwin') out.env = { SDL_JOYSTICK_MFI: '0' };
+    return out;
   },
 
   // Directories where Lichii (Eden/yuzu fork) looks for prod.keys, most likely first.
