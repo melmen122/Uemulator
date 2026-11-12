@@ -26,8 +26,6 @@ section 7, so you can recognise it.
 | Lichii that Uemulator launches | `~/Library/Application Support/Uemulator/emulators/lichii/` |
 | A development build of Lichii (this repo) | `bin/lichii/` |
 
-On macOS Uemulator launches `/Applications/lichii.app` first (then `~/Applications/lichii.app`, then `bin/lichii/`), so the Lichii you open by hand and configure is the one that runs your games. After rebuilding with `node scripts/build-cores.mjs lichii`, copy the new `bin/lichii/lichii.app` over `/Applications/lichii.app` (e.g. `ditto bin/lichii/lichii.app /Applications/lichii.app`) or the older installed copy keeps being used.
-
 Always quit Lichii with **Cmd+Q**: the log and settings are only written completely on a normal quit.
 
 ## 3. Games, updates and DLC

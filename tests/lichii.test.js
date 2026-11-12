@@ -38,9 +38,9 @@ test('lichii metadata', () => {
 
 test('lichii candidates: darwin', () => {
   assert.deepEqual(lichii.candidates({ platform: 'darwin', binDir: '/app/bin', homedir: '/Users/u', env: {} }), [
+    '/app/bin/lichii/lichii.app/Contents/MacOS/lichii',
     '/Applications/lichii.app/Contents/MacOS/lichii',
     '/Users/u/Applications/lichii.app/Contents/MacOS/lichii',
-    '/app/bin/lichii/lichii.app/Contents/MacOS/lichii',
   ]);
 });
 
