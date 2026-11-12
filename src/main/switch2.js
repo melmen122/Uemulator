@@ -42,6 +42,21 @@ function contentKindFromTitleId(hex) {
 }
 
 /**
+ * Title ID of the base game an update or DLC belongs to: an update's id with the low 12 bits cleared,
+ * a DLC's id is base + 0x1000 + index, so its base is one 0x1000 block lower. A base id maps to itself.
+ * @param {*} hex
+ * @returns {string|null} uppercased 16-digit id, or null when `hex` is not a Switch 1 title ID
+ */
+function baseTitleId(hex) {
+  const kind = contentKindFromTitleId(hex);
+  if (!kind) return null;
+  let n = BigInt('0x' + hex);
+  if (kind === 'dlc') n -= 0x1000n;
+  n &= ~0xFFFn;
+  return n.toString(16).toUpperCase().padStart(16, '0');
+}
+
+/**
  * The sentence shown when an update or DLC file is launched as if it were a game.
  * @param {*} kind 'update' | 'dlc'
  * @returns {string|null} null for anything else
@@ -137,6 +152,6 @@ function detectSwitchGeneration(info) {
 }
 
 module.exports = {
-  TITLE_ID_RE, PFS0_HEAD_BYTES, classifyTitleId, contentKindFromTitleId, contentBlockMessage,
+  TITLE_ID_RE, PFS0_HEAD_BYTES, classifyTitleId, contentKindFromTitleId, baseTitleId, contentBlockMessage,
   titleIdFromName, titleIdFromPath, parsePfs0TitleId, detectSwitchGeneration,
 };

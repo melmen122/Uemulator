@@ -293,47 +293,82 @@ test('contentBlockMessage: a readable sentence for update and dlc only', () => {
   }
 });
 
-test('scan: update and DLC .nsp are flagged (by name or PFS0 ticket); base, .xci, unknown and Switch 2 are not', async () => {
-  touch(`MK [${UPD}][v1245184].nsp`, 'junk'); // update by name
-  touch(`MK [${DLC1}].nsp`, 'junk'); // DLC by name
-  touch(`MK [${BASE}].nsp`, 'junk'); // base by name
-  touch('UpdTik.nsp', nspWith(UPD)); // update only via the ticket name
-  touch('DlcTik.nsp', nspWith(DLC1));
-  touch('BaseTik.nsp', nspWith(BASE));
-  touch(`Updatelike [${UPD}].xci`, 'junk'); // not an .nsp: never flagged
-  touch('Plain.nsp', 'not a pfs0'); // unidentified
-  touch(`Switch2 [${S2}].nsp`, 'junk'); // Switch 2 is never flagged
+test('contentKindFromTitleId / baseTitleId: update and DLC map back to the base id', () => {
+  assert.equal(sw.baseTitleId(BASE), BASE);
+  assert.equal(sw.baseTitleId(UPD), BASE);
+  assert.equal(sw.baseTitleId(DLC1), BASE);
+  assert.equal(sw.baseTitleId('0100152000023FFF'), BASE);
+  assert.equal(sw.baseTitleId(UPD.toLowerCase()), BASE);
+  for (const bad of [S2, OTHER, '', null, undefined, 5]) assert.equal(sw.baseTitleId(bad), null, String(bad));
+});
+
+const MK_BASE = `Mario Kart 8 Deluxe [${BASE}][v0].nsp`;
+const MK_UPD = `Mario Kart 8 Deluxe [${UPD}][v1245184].nsp`;
+
+test('scan: update and DLC files are not listed as games; the base game is, with the files attached', async () => {
+  touch(`Mario Kart 8 Deluxe SWITCH NSP BASE GAME/${MK_BASE}`, 'junk');
+  touch(`Mario Kart 8 Deluxe UPDATE 3.0.3/${MK_UPD}`, 'junk'); // update by name
+  touch(`DLC/MK [${DLC1}].nsp`, 'junk'); // DLC by name
+  touch('UpdTik.nsp', nspWith('0100AAAAAAAAA800')); // update with no base game in the library: dropped
+  touch('Updatelike [0100BBBBBBBBB800].xci', 'junk'); // .xci update, base absent
+  touch('Plain.nsp', 'not a pfs0'); // unidentified: still a game
+  touch(`Switch2 [${S2}].nsp`, 'junk');
   await both(async (kind, scan) => {
-    const m = byBase(await scan([root]));
-    assert.equal(m[`MK [${UPD}][v1245184].nsp`].content, 'update', kind);
-    assert.equal(m[`MK [${DLC1}].nsp`].content, 'dlc', kind);
-    assert.equal(m['UpdTik.nsp'].content, 'update', kind);
-    assert.equal(m['DlcTik.nsp'].content, 'dlc', kind);
-    for (const name of [`MK [${BASE}].nsp`, 'BaseTik.nsp', `Updatelike [${UPD}].xci`, 'Plain.nsp', `Switch2 [${S2}].nsp`]) {
-      assert.equal('content' in m[name], false, `${kind}: ${name}`);
-    }
-    assert.equal(m[`MK [${UPD}][v1245184].nsp`].system, 'switch', kind); // still listed as Switch
+    const games = await scan([root]);
+    const m = byBase(games);
+    assert.deepEqual(Object.keys(m).sort(), [MK_BASE, 'Plain.nsp', `Switch2 [${S2}].nsp`].sort(), kind);
+    assert.equal(m[MK_BASE].system, 'switch', kind);
+    assert.deepEqual(m[MK_BASE].updates.map((p) => path.basename(p)), [MK_UPD], kind);
+    assert.deepEqual(m[MK_BASE].dlc.map((p) => path.basename(p)), [`MK [${DLC1}].nsp`], kind);
+    assert.equal(m['Plain.nsp'].updates, undefined, kind);
     assert.equal(m[`Switch2 [${S2}].nsp`].system, 'switch2', kind);
+    for (const g of games) assert.equal('content' in g, false, `${kind}: ${g.path}`);
+    assert.ok(fs.existsSync(path.join(root, 'Mario Kart 8 Deluxe UPDATE 3.0.3', MK_UPD))); // never deleted
   });
 });
 
-test('store library keeps content only for update/dlc and drops anything else', () => {
+test('scan: an update or DLC identified only by its PFS0 ticket is not listed; an update next to a base-game folder id is not mistaken for the base', async () => {
+  touch(`Base [${BASE}]/base.nsp`, nspWith(BASE)); // id only in the folder name + ticket
+  touch(`Base [${BASE}]/patch.nsp`, nspWith(UPD)); // folder says base, ticket says update
+  touch(`Base [${BASE}]/addon.nsp`, nspWith(DLC1));
+  await both(async (kind, scan) => {
+    const games = await scan([root]);
+    assert.deepEqual(games.map((g) => path.basename(g.path)), ['base.nsp'], kind);
+    assert.deepEqual(games[0].updates.map((p) => path.basename(p)), ['patch.nsp'], kind);
+    assert.deepEqual(games[0].dlc.map((p) => path.basename(p)), ['addon.nsp'], kind);
+  });
+});
+
+test('scan: update path is kept off the library when only the update exists, and a rescan keeps favorite/lastPlayed of the base', async () => {
+  const base = touch(`G/${MK_BASE}`, 'junk');
+  touch(`U/${MK_UPD}`, 'junk');
+  const first = scanFolders([root]);
+  const prev = first.map((g) => ({ ...g, favorite: true, lastPlayed: 42 }));
+  const again = scanFolders([root], { previous: prev });
+  assert.equal(again.length, 1);
+  assert.equal(again[0].path, base);
+  assert.equal(again[0].favorite, true);
+  assert.equal(again[0].lastPlayed, 42);
+  assert.equal(again[0].updates.length, 1);
+});
+
+test('store: update/DLC entries saved by an older version are purged on load; base entries and update paths are kept', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uemu-sw2c-'));
   try {
-    const mk = (id, p, content) => ({ id, title: 't', path: p, system: 'switch', size: 1, lastPlayed: null, favorite: false, ...(content === undefined ? {} : { content }) });
-    const st = createStore({ dir });
-    st.setLibrary({ folders: [], games: [
-      mk('aaaaaaaaaaaa', '/g/a.nsp', 'update'),
-      mk('bbbbbbbbbbbb', '/g/b.nsp', 'dlc'),
-      mk('cccccccccccc', '/g/c.nsp', 'base'),
-      mk('dddddddddddd', '/g/d.nsp', '<script>'),
+    const mk = (id, p, extra = {}) => ({ id, title: 't', path: p, system: 'switch', size: 1, lastPlayed: null, favorite: false, ...extra });
+    const file = path.join(dir, require('../src/main/store').FILE_NAME);
+    fs.writeFileSync(file, JSON.stringify({ version: 1, settings: {}, library: { folders: ['/g'], games: [
+      mk('aaaaaaaaaaaa', '/g/a.nsp', { content: 'update' }),
+      mk('bbbbbbbbbbbb', '/g/b.nsp', { content: 'dlc' }),
+      mk('cccccccccccc', '/g/c.nsp', { updates: ['/g/u.nsp', 'relative.nsp', 5], dlc: [] }),
+      mk('dddddddddddd', '/g/d.nsp', { content: '<script>' }),
       mk('eeeeeeeeeeee', '/g/e.nsp'),
-    ] });
-    for (const s of [st, createStore({ dir })]) {
-      const m = Object.fromEntries(s.getLibrary().games.map((g) => [g.id, g]));
-      assert.equal(m.aaaaaaaaaaaa.content, 'update');
-      assert.equal(m.bbbbbbbbbbbb.content, 'dlc');
-      for (const id of ['cccccccccccc', 'dddddddddddd', 'eeeeeeeeeeee']) assert.equal('content' in m[id], false, id);
-    }
+    ] } }));
+    const st = createStore({ dir });
+    const m = Object.fromEntries(st.getLibrary().games.map((g) => [g.id, g]));
+    assert.deepEqual(Object.keys(m).sort(), ['cccccccccccc', 'dddddddddddd', 'eeeeeeeeeeee']);
+    assert.deepEqual(m.cccccccccccc.updates, ['/g/u.nsp']);
+    assert.equal('dlc' in m.cccccccccccc, false);
+    for (const id of ['dddddddddddd', 'eeeeeeeeeeee']) assert.equal('content' in m[id], false, id);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

@@ -147,7 +147,7 @@ path is always last.
 | `setCorePath(id, path\|null)` | `cores:setPath` | updated core |
 | `pickFile(kind)` | `dialog:pickFile` (`'exe'`\|`'rom'`) | path or null |
 | `pickFolder()` | `dialog:pickFolder` | path or null |
-| `getLibrary()` | `library:get` | `{ folders:[], games:[{id,title,path,system,size,lastPlayed,favorite,content?}] }`. `content` is `'update'` or `'dlc'` only for a Switch 1 `.nsp` whose title ID ends in `800` (update) or is add-on content; it is absent for games. Such a game is listed but `game:launch` rejects it with a readable message (install it in the emulator, launch the base game). |
+| `getLibrary()` | `library:get` | `{ folders:[], games:[{id,title,path,system,size,lastPlayed,favorite,content?}] }`. Switch 1 update (title ID ends `800`) and DLC files are never listed as games: the scan attaches their paths to the base game as optional `updates` / `dlc` string arrays and drops them otherwise; entries of that kind saved by older versions (`content: 'update'|'dlc'`) are purged when the store loads. `game:launch` still rejects a game carrying `content` with a readable message. |
 | `addFolder(path)` / `removeFolder(path)` | `library:addFolder` / `library:removeFolder` | library |
 | `rescan()` | `library:rescan` | library |
 | `toggleFavorite(gameId)` | `library:favorite` | game |

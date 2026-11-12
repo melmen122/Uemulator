@@ -4,7 +4,7 @@ const nodeFs = require('fs');
 const nodePath = require('path');
 const crypto = require('crypto');
 const { detectSystem, isUsrdirEboot } = require('./systems');
-const { PFS0_HEAD_BYTES, classifyTitleId, contentKindFromTitleId, titleIdFromPath, parsePfs0TitleId } = require('./switch2');
+const { PFS0_HEAD_BYTES, classifyTitleId, contentKindFromTitleId, baseTitleId, titleIdFromName, titleIdFromPath, parsePfs0TitleId } = require('./switch2');
 
 const MAX_DEPTH = 6;
 // Compared case-insensitively. The last two are Windows system folders present at the root of every NTFS drive
@@ -176,31 +176,39 @@ function* walk(st, dir, depth) {
       } else {
         title = titleFromPath(full);
       }
-      let content = null; // 'update' | 'dlc' for a Switch 1 .nsp that is not a game on its own
+      let content = null; // 'update' | 'dlc': a Switch 1 package that is not a game on its own
+      let titleId = null;
       if (system === 'switch') {
-        // Switch 1 vs 2: title ID from the name/folders; for .nsp fall back to the PFS0 ticket name.
+        // Switch 1 vs 2: title ID from the name/folders; for .nsp fall back to the PFS0 ticket name
+        // (also when only a parent folder carried the ID, so an update beside its base game is not taken for it).
         // .xci/.nca/.nro cannot be identified without keys, so they stay name-based only.
         const isNsp = /\.nsp$/i.test(full);
-        let titleId = titleIdFromPath(full);
+        titleId = titleIdFromPath(full);
         let kind = classifyTitleId(titleId);
-        if (!kind && isNsp) {
+        if (isNsp && !titleIdFromName(nodePath.basename(full))) {
           try {
             // stat first (follows symlinks): opening a FIFO/device would block and wedge the scan.
             const nspStat = yield ['stat', full];
             if (nspStat && typeof nspStat.isFile === 'function' && nspStat.isFile()) {
               const head = yield ['readHead', full, PFS0_HEAD_BYTES];
-              titleId = parsePfs0TitleId(head);
-              kind = classifyTitleId(titleId);
+              const fromTicket = parsePfs0TitleId(head);
+              if (fromTicket) { titleId = fromTicket; kind = classifyTitleId(titleId); }
             }
-          } catch { /* fall back to Switch 1 */ }
+          } catch { /* fall back to the name-based ID / Switch 1 */ }
         }
         if (kind === 'switch2') system = 'switch2';
-        else if (isNsp) {
+        else {
           // An update (id ends 800) or DLC package holds only patch/add-on data and cannot start alone.
           const c = contentKindFromTitleId(titleId);
           if (c === 'update' || c === 'dlc') content = c;
         }
       }
+      if (content) {
+        // Not a library game: remember it so scanGen can attach it to its base game.
+        st.addons.push({ kind: content, titleId, path: full });
+        continue;
+      }
+      if (titleId) st.titleIds.set(id, titleId);
       st.found.set(id, {
         id,
         title,
@@ -209,7 +217,6 @@ function* walk(st, dir, depth) {
         size,
         lastPlayed: old && typeof old.lastPlayed === 'number' ? old.lastPlayed : null,
         favorite: !!(old && old.favorite),
-        ...(content ? { content } : {}),
       });
     }
   }
@@ -221,6 +228,8 @@ function* scanGen(folders, opts) {
     maxEntries: Number.isInteger(opts.maxEntries) && opts.maxEntries >= 0 ? opts.maxEntries : MAX_ENTRIES,
     prev: new Map((opts.previous || []).map((g) => [g.id, g])),
     found: new Map(), // id -> game
+    titleIds: new Map(), // game id -> Switch 1 title ID (base-game lookup for updates/DLC)
+    addons: [], // Switch update/DLC files met during the walk: {kind, titleId, path}
     visitedDirs: new Set(), // real paths (junctions and symlinks included), guards against link loops
     caseInsensitive: (opts.platform || process.platform) === 'win32',
     visited: 0,
@@ -231,6 +240,23 @@ function* scanGen(folders, opts) {
     if (typeof folder !== 'string' || !nodePath.isAbsolute(folder)) continue;
     yield* walk(st, nodePath.resolve(folder), 0);
     if (st.stop) break;
+  }
+  // Updates and DLC are not games: attach them to their base game (when it is in the library) and drop the rest.
+  if (st.addons.length) {
+    const byTitleId = new Map();
+    for (const [id, tid] of st.titleIds) {
+      const g = st.found.get(id);
+      if (g && g.system === 'switch' && contentKindFromTitleId(tid) === 'base') byTitleId.set(tid, g);
+    }
+    for (const a of st.addons) {
+      const base = byTitleId.get(baseTitleId(a.titleId));
+      if (!base) continue;
+      const key = a.kind === 'update' ? 'updates' : 'dlc';
+      (base[key] || (base[key] = [])).push(a.path);
+    }
+    for (const g of st.found.values()) {
+      for (const key of ['updates', 'dlc']) if (g[key]) g[key].sort();
+    }
   }
   const games = [...st.found.values()].sort((a, b) => a.title.localeCompare(b.title) || a.path.localeCompare(b.path));
   // Non-enumerable so the result still behaves (and deep-equals) like a plain array.

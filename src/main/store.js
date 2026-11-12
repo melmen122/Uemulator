@@ -77,6 +77,12 @@ function systemMatchesPath(system, filePath) {
   return detected === system || (detected === 'switch' && system === 'switch2');
 }
 
+/** `{key: [absolute path strings]}` when the value holds at least one, else `{}`. */
+function pathList(key, v) {
+  const list = Array.isArray(v) ? v.filter((p) => typeof p === 'string' && nodePath.isAbsolute(p)) : [];
+  return list.length ? { [key]: list } : {};
+}
+
 function sanitizeGames(games) {
   if (!Array.isArray(games)) return [];
   return games.filter((g) => isPlainObject(g) && typeof g.id === 'string' && typeof g.path === 'string' && typeof g.system === 'string'
@@ -89,8 +95,11 @@ function sanitizeGames(games) {
       size: Number.isFinite(g.size) ? g.size : 0,
       lastPlayed: typeof g.lastPlayed === 'number' ? g.lastPlayed : null,
       favorite: !!g.favorite,
-      // Switch update / DLC packages: listed, but never launched (see ipc 'game:launch').
+      // Only reachable for in-memory entries: load() purges update/DLC entries saved by older versions.
       ...(g.content === 'update' || g.content === 'dlc' ? { content: g.content } : {}),
+      // Update / DLC files found next to a base game (paths only; the files are never listed as games).
+      ...pathList('updates', g.updates),
+      ...pathList('dlc', g.dlc),
     }));
 }
 
@@ -132,7 +141,9 @@ function createStore(opts = {}) {
     if (isPlainObject(data.library)) {
       state.library.folders = Array.isArray(data.library.folders)
         ? data.library.folders.filter((f) => typeof f === 'string' && nodePath.isAbsolute(f)) : [];
-      state.library.games = sanitizeGames(data.library.games);
+      // Older versions listed Switch update / DLC packages as games. They are not games: drop them from the
+      // library (the files stay on disk; the next scan re-attaches them to their base game as `updates`/`dlc`).
+      state.library.games = sanitizeGames(data.library.games).filter((g) => !g.content);
     }
   }
 
