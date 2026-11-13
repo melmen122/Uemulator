@@ -31,8 +31,10 @@ module.exports = {
     const { platform, binDir } = ctx;
     const P = pathFor(platform);
     if (!binDir) return [];
+    // Windows: self-contained embedded Python (scripts/bundle-win.mjs) first, then a venv. Both are python.exe,
+    // so buildArgs runs them as `python.exe -m pyboy`.
     return platform === 'win32'
-      ? [P.join(binDir, 'pyboy', 'venv', 'Scripts', 'python.exe')]
+      ? [P.join(binDir, 'pyboy', 'python', 'python.exe'), P.join(binDir, 'pyboy', 'venv', 'Scripts', 'python.exe')]
       : [P.join(binDir, 'pyboy', 'venv', 'bin', 'python')];
   },
 

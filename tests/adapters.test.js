@@ -86,11 +86,12 @@ test('pyboy: a `pyboy` console script is run directly without -m', () => {
   assert.deepEqual(pyboy.buildArgs('/r/x.gb', { exe: '/usr/local/bin/pyboy' }).args, ['/r/x.gb']);
 });
 
-test('pyboy candidates point at the venv python', () => {
+test('pyboy candidates: bundled embedded python first, then the venv python', () => {
   assert.deepEqual(pyboy.candidates({ platform: 'linux', binDir: '/b' }), ['/b/pyboy/venv/bin/python']);
   const w = pyboy.candidates({ platform: 'win32', binDir: 'C:\\b' });
-  assert.equal(w.length, 1);
-  assert.match(w[0], /venv\\Scripts\\python\.exe$/);
+  assert.equal(w.length, 2);
+  assert.match(w[0], /pyboy\\python\\python\.exe$/);
+  assert.match(w[1], /venv\\Scripts\\python\.exe$/);
 });
 
 test('project64: non-win32 with .exe uses wine, args are [exe, rom]', () => {
@@ -154,4 +155,68 @@ test('candidates return absolute-ish strings and honor binDir first', () => {
   }
   assert.deepEqual(project64.candidates(ctx), []);
   assert.ok(project64.candidates({ platform: 'win32', binDir: 'C:\\b', env: {} })[0].startsWith('C:\\b\\project64'));
+});
+
+// ---- ryujinx keysDirs / preflight ----
+const swGame = { system: 'switch' };
+const fakeStat = (files, dirs = []) => ({
+  statSync: (p) => {
+    if (dirs.includes(p)) return { isFile: () => false, isDirectory: () => true, size: 0 };
+    if (p in files) return { isFile: () => true, isDirectory: () => false, size: files[p] };
+    throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+  },
+});
+
+test('ryujinx keysDirs: per platform', () => {
+  assert.deepEqual(ryujinx.keysDirs({ platform: 'darwin', homedir: '/Users/u', env: {} }), ['/Users/u/Library/Application Support/Ryujinx/system', '/Users/u/.switch']);
+  assert.deepEqual(ryujinx.keysDirs({ platform: 'linux', homedir: '/home/u', env: {} }), ['/home/u/.config/Ryujinx/system', '/home/u/.switch']);
+  assert.deepEqual(ryujinx.keysDirs({ platform: 'linux', homedir: '/home/u', env: { XDG_CONFIG_HOME: '/xdg' } }), ['/xdg/Ryujinx/system', '/home/u/.switch']);
+  assert.deepEqual(ryujinx.keysDirs({ platform: 'win32', homedir: 'C:\\Users\\u', env: { APPDATA: 'D:\\Roam' } }), ['D:\\Roam\\Ryujinx\\system', 'C:\\Users\\u\\.switch']);
+  assert.deepEqual(ryujinx.keysDirs({ platform: 'win32', homedir: 'C:\\Users\\u', env: {} }), ['C:\\Users\\u\\AppData\\Roaming\\Ryujinx\\system', 'C:\\Users\\u\\.switch']);
+});
+
+test('ryujinx keysDirs win32: a portable dir next to the exe takes priority; a portable file or missing dir does not', () => {
+  const base = { platform: 'win32', homedir: 'C:\\Users\\u', env: { APPDATA: 'D:\\Roam' }, exe: 'C:\\R\\Ryujinx.exe' };
+  assert.deepEqual(
+    ryujinx.keysDirs({ ...base, fs: fakeStat({}, ['C:\\R\\portable']) }),
+    ['C:\\R\\portable\\system', 'D:\\Roam\\Ryujinx\\system', 'C:\\Users\\u\\.switch']);
+  const noPortable = ['D:\\Roam\\Ryujinx\\system', 'C:\\Users\\u\\.switch'];
+  assert.deepEqual(ryujinx.keysDirs({ ...base, fs: fakeStat({}) }), noPortable);
+  assert.deepEqual(ryujinx.keysDirs({ ...base, fs: fakeStat({ 'C:\\R\\portable': 1 }) }), noPortable);
+  assert.deepEqual(ryujinx.keysDirs({ ...base }), noPortable);
+});
+
+test('ryujinx preflight: missing prod.keys is an error naming the first keys dir', () => {
+  const ctx = { platform: 'linux', homedir: '/home/u', env: {}, exe: '/x/Ryujinx', fs: fakeStat({}) };
+  const msg = ryujinx.preflight(swGame, ctx);
+  assert.equal(typeof msg, 'string');
+  assert.match(msg, /prod\.keys/);
+  assert.ok(msg.includes('/home/u/.config/Ryujinx/system'), msg);
+});
+
+test('ryujinx preflight: empty prod.keys is an error, non-empty is accepted', () => {
+  const f = '/home/u/.config/Ryujinx/system/prod.keys';
+  const ctx = { platform: 'linux', homedir: '/home/u', env: {}, exe: '/x/Ryujinx' };
+  assert.match(ryujinx.preflight(swGame, { ...ctx, fs: fakeStat({ [f]: 0 }) }), /prod\.keys/);
+  assert.equal(ryujinx.preflight(swGame, { ...ctx, fs: fakeStat({ [f]: 12 }) }), null);
+});
+
+test('ryujinx preflight win32: keys in the portable dir count; %APPDATA% keys count; a directory named prod.keys does not', () => {
+  const base = { platform: 'win32', homedir: 'C:\\Users\\u', env: { APPDATA: 'D:\\Roam' }, exe: 'C:\\R\\Ryujinx.exe' };
+  const portableKeys = 'C:\\R\\portable\\system\\prod.keys';
+  const roamKeys = 'D:\\Roam\\Ryujinx\\system\\prod.keys';
+  assert.equal(ryujinx.preflight(swGame, { ...base, fs: fakeStat({ [portableKeys]: 3 }, ['C:\\R\\portable']) }), null);
+  assert.equal(ryujinx.preflight(swGame, { ...base, fs: fakeStat({ [roamKeys]: 3 }) }), null);
+  const userKeys = 'C:\\Users\\u\\.switch\\prod.keys';
+  assert.equal(ryujinx.preflight(swGame, { ...base, fs: fakeStat({ [userKeys]: 3 }) }), null, 'keys only in ~/.switch pass');
+  assert.notEqual(ryujinx.preflight(swGame, { ...base, fs: fakeStat({ [userKeys]: 0 }) }), null, 'empty ~/.switch keys do not');
+  const msg = ryujinx.preflight(swGame, { ...base, fs: fakeStat({}, ['C:\\R\\portable', roamKeys]) });
+  assert.ok(msg && msg.includes('C:\\R\\portable\\system'), msg);
+});
+
+test('ryujinx preflight: non-switch systems and missing game are not checked; a throwing fs never throws', () => {
+  const ctx = { platform: 'linux', homedir: '/h', env: {}, exe: '/x/Ryujinx', fs: fakeStat({}) };
+  assert.equal(ryujinx.preflight({ system: 'gba' }, ctx), null);
+  assert.equal(ryujinx.preflight(null, ctx), null);
+  assert.equal(ryujinx.preflight(swGame, { ...ctx, fs: { statSync() { throw new Error('boom'); } } }) === null, false);
 });

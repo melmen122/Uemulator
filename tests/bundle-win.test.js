@@ -23,24 +23,49 @@ test('bundledBinDir: packaged uses resources/emulators, otherwise appPath/bin', 
 });
 
 test('MANIFEST shape and pinned values', async () => {
-  const { MANIFEST } = await load();
+  const { MANIFEST, ALLOWED_HOSTS } = await load();
   assert.ok(Object.isFrozen(MANIFEST));
-  assert.deepEqual(MANIFEST.map((e) => e.id), ['lichii', 'mgba', 'azahar', 'rpcs3']);
-  assert.deepEqual(MANIFEST.map((e) => e.exe), ['lichii.exe', 'mGBA.exe', 'azahar.exe', 'rpcs3.exe']);
-  assert.deepEqual(MANIFEST.map((e) => e.format), ['zip', '7z', 'zip', '7z']);
-  assert.deepEqual(MANIFEST.map((e) => e.version), ['build-160', '0.10.5', '2126.2', '0.0.43-20574']);
-  assert.equal(new Set(MANIFEST.map((e) => e.id)).size, 4);
+  assert.deepEqual(MANIFEST.map((e) => e.id), ['lichii', 'mgba', 'azahar', 'rpcs3', 'ryujinx', 'pyboy']);
+  assert.deepEqual(MANIFEST.map((e) => e.exe), ['lichii.exe', 'mGBA.exe', 'azahar.exe', 'rpcs3.exe', 'Ryujinx.exe', 'python/python.exe']);
+  assert.deepEqual(MANIFEST.map((e) => e.format), ['zip', '7z', 'zip', '7z', 'zip', 'zip']);
+  assert.deepEqual(MANIFEST.map((e) => e.version), ['build-160', '0.10.5', '2126.2', '0.0.43-20574', '1.3.3', '2.9.0']);
+  assert.equal(new Set(MANIFEST.map((e) => e.id)).size, 6);
+  // Every download is https from an allowlisted host and pinned by a 64-hex sha256.
+  const checkArtifact = (a, label, httpHosts = []) => {
+    assert.match(a.sha256, /^[0-9a-f]{64}$/, label);
+    const u = new URL(a.url);
+    assert.ok(u.protocol === 'https:' || (u.protocol === 'http:' && httpHosts.includes(u.hostname)), `${label}: ${a.url}`);
+    assert.ok(ALLOWED_HOSTS.includes(u.hostname), `${label}: host ${u.hostname}`);
+    assert.ok(a.url.endsWith(a.file), label);
+  };
   for (const e of MANIFEST) {
     assert.ok(Object.isFrozen(e), e.id);
     for (const k of ['id', 'name', 'version', 'file', 'url', 'sha256', 'format', 'exe']) assert.equal(typeof e[k], 'string', `${e.id}.${k}`);
-    assert.match(e.sha256, /^[0-9a-f]{64}$/, e.id);
-    const u = new URL(e.url);
-    assert.equal(u.protocol, 'https:');
-    assert.equal(u.hostname, 'github.com');
-    assert.ok(e.url.endsWith(e.file), e.id);
+    checkArtifact(e, e.id);
     assert.ok(e.file.endsWith('.' + e.format), e.id);
+    assert.ok(Array.isArray(e.keep), e.id);
+    for (const w of e.wheels || []) {
+      assert.ok(Object.isFrozen(w), `${e.id}/${w.file}`);
+      checkArtifact(w, `${e.id}/${w.file}`);
+      assert.ok(w.file.endsWith('.whl'), w.file);
+    }
+    if (e.firmware) checkArtifact(e.firmware, `${e.id}/firmware`, ['dus01.ps3.update.playstation.net']);
   }
   const by = Object.fromEntries(MANIFEST.map((e) => [e.id, e]));
+  assert.equal(by.rpcs3.firmware.version, '4.93');
+  assert.equal(by.rpcs3.firmware.file, 'PS3UPDAT.PUP');
+  assert.equal(new URL(by.rpcs3.firmware.url).hostname, 'dus01.ps3.update.playstation.net');
+  assert.equal(by.rpcs3.firmware.sha256, '158471fd834f8ea8036136b6aab43cd86c7ba73d79ca30e0af3c0fe0001cf365');
+  assert.equal(by.rpcs3.firmware.marker, 'dev_flash/vsh/module/vsh.self');
+  assert.equal(by.ryujinx.format, 'zip');
+  assert.equal(new URL(by.ryujinx.url).hostname, 'git.ryujinx.app');
+  assert.deepEqual([...by.ryujinx.keep], ['portable']);
+  assert.equal(by.pyboy.kind, 'python');
+  assert.equal(new URL(by.pyboy.url).hostname, 'www.python.org');
+  assert.ok(by.pyboy.wheels.length >= 1);
+  for (const w of by.pyboy.wheels) assert.equal(new URL(w.url).hostname, 'files.pythonhosted.org');
+  assert.ok(by.pyboy.wheels.some((w) => w.file.startsWith('pyboy-2.9.0-')));
+  assert.deepEqual([...by.pyboy.keep], []);
   assert.equal(by.lichii.file, 'lichii-windows-x86_64.zip');
   assert.equal(by.lichii.url, 'https://github.com/zortos293/Lichii/releases/download/build-160/lichii-windows-x86_64.zip');
   assert.equal(by.lichii.sha256, '215459edfbd9f6c542b4548cabf4c16d487feca8ce1003a1094f9beda5f02460');
@@ -260,4 +285,156 @@ test('MANIFEST keep lists protect user data', async () => {
   assert.ok(by.lichii.keep.includes('user'));
   assert.ok(by.mgba.keep.includes('config.ini'));
   assert.ok(by.mgba.keep.includes('qt.ini'));
+  assert.ok(by.ryujinx.keep.includes('portable'));
+  assert.ok(by.rpcs3.keep.includes('dev_flash'), 'installed PS3 firmware must survive re-bundling');
+});
+
+test('ALLOWED_HOSTS is exactly the expected download hosts and is frozen', async () => {
+  const { ALLOWED_HOSTS } = await load();
+  assert.ok(Object.isFrozen(ALLOWED_HOSTS));
+  assert.deepEqual([...ALLOWED_HOSTS].sort(), [
+    'dus01.ps3.update.playstation.net', 'files.pythonhosted.org', 'git.ryujinx.app', 'github.com', 'www.python.org',
+  ]);
+});
+
+test('patchPth: stock embeddable ._pth gains Lib\\site-packages and an active "import site"', async () => {
+  const { patchPth } = await load();
+  const stock = 'python313.zip\r\n.\r\n\r\n# Uncomment to run site.main() automatically\r\n#import site\r\n';
+  const out = patchPth(stock);
+  const lines = out.split(/\r?\n/).filter((l) => l !== '');
+  assert.ok(lines.includes('Lib\\site-packages'), out);
+  assert.ok(lines.includes('import site'), out);
+  assert.ok(!lines.some((l) => /^#\s*import\s+site/.test(l)), out);
+  assert.ok(lines.includes('python313.zip') && lines.includes('.'), 'original search paths kept');
+  assert.equal(lines.filter((l) => l === 'import site').length, 1);
+  // site-packages must precede "import site" (it is a path entry, not a statement)
+  assert.ok(lines.indexOf('Lib\\site-packages') < lines.indexOf('import site'));
+  assert.ok(out.endsWith('\r\n'));
+});
+
+test('patchPth is idempotent and also handles LF input and a missing import-site line', async () => {
+  const { patchPth } = await load();
+  const stock = 'python313.zip\n.\n# Uncomment to run site.main() automatically\n#import site\n';
+  const once = patchPth(stock);
+  assert.equal(patchPth(once), once);
+  assert.equal(patchPth(patchPth(once)), once);
+  const bare = patchPth('python313.zip\n.\n');
+  const lines = bare.split(/\r?\n/).filter((l) => l !== '');
+  assert.deepEqual(lines, ['python313.zip', '.', 'Lib\\site-packages', 'import site']);
+  assert.equal(patchPth(bare), bare);
+});
+
+test('constants: REDIRECT_HOSTS, MAX_REDIRECTS, FW_STAMP', async () => {
+  const { REDIRECT_HOSTS, ALLOWED_HOSTS, MAX_REDIRECTS, FW_STAMP } = await load();
+  assert.ok(Object.isFrozen(REDIRECT_HOSTS));
+  assert.deepEqual([...REDIRECT_HOSTS], [...ALLOWED_HOSTS, 'release-assets.githubusercontent.com', 'objects.githubusercontent.com']);
+  assert.equal(MAX_REDIRECTS, 5);
+  assert.equal(FW_STAMP, '.uemulator-ps3fw.json');
+  assert.ok(pkg().build.win.extraResources[0].filter.includes('!**/' + FW_STAMP));
+});
+
+test('rpcs3 MANIFEST keep includes the firmware stamp', async () => {
+  const { MANIFEST, FW_STAMP } = await load();
+  assert.ok(MANIFEST.find((e) => e.id === 'rpcs3').keep.includes(FW_STAMP));
+});
+
+test('checkSource: allowlist and scheme rules', async () => {
+  const { checkSource, REDIRECT_HOSTS } = await load();
+  const f = 'x';
+  assert.throws(() => checkSource({ file: f, url: 'https://evil.example.com/a' }), /allowlist/);
+  assert.throws(() => checkSource({ file: f, url: 'http://github.com/a' }), /non-https/);
+  assert.throws(() => checkSource({ file: f, url: 'http://git.ryujinx.app/a' }), /non-https/);
+  assert.doesNotThrow(() => checkSource({ file: f, url: 'https://github.com/a' }));
+  assert.doesNotThrow(() => checkSource({ file: f, url: 'http://dus01.ps3.update.playstation.net/a' }));
+  const cdn = { file: f, url: 'https://objects.githubusercontent.com/a' };
+  assert.throws(() => checkSource(cdn), /allowlist/);
+  assert.doesNotThrow(() => checkSource(cdn, REDIRECT_HOSTS));
+});
+
+test('fetchChecked: redirects are manual, re-validated per hop, and bounded', async () => {
+  const { fetchChecked, MAX_REDIRECTS } = await load();
+  const res = (status, loc) => ({ status, headers: { get: (n) => (n.toLowerCase() === 'location' ? loc ?? null : null) } });
+  const seq = (...rs) => {
+    const calls = [];
+    const fn = async (url, opts) => { calls.push([url, opts]); return rs[Math.min(calls.length - 1, rs.length - 1)]; };
+    fn.calls = calls;
+    return fn;
+  };
+  const item = { file: 'x', url: 'https://github.com/a/b' };
+
+  const direct = seq(res(200));
+  const r0 = await fetchChecked(item, direct);
+  assert.equal(r0.status, 200);
+  assert.equal(direct.calls.length, 1);
+  assert.deepEqual(direct.calls[0], [item.url, { redirect: 'manual' }]);
+
+  const hop = seq(res(302, 'https://release-assets.githubusercontent.com/z'), res(200));
+  const r1 = await fetchChecked(item, hop);
+  assert.equal(r1.status, 200);
+  assert.deepEqual(hop.calls.map((c) => c[0]), [item.url, 'https://release-assets.githubusercontent.com/z']);
+  for (const c of hop.calls) assert.deepEqual(c[1], { redirect: 'manual' });
+
+  const rel = seq(res(301, '/other/path'), res(200));
+  await fetchChecked(item, rel);
+  assert.equal(rel.calls[1][0], 'https://github.com/other/path');
+
+  const bad = seq(res(302, 'https://evil.example.com/p'), res(200));
+  await assert.rejects(fetchChecked(item, bad), /allowlist/);
+  assert.equal(bad.calls.length, 1);
+
+  await assert.rejects(fetchChecked(item, seq(res(302, 'http://objects.githubusercontent.com/p'))), /downgrade/);
+  await assert.rejects(fetchChecked(item, seq(res(302))), /without a Location/);
+
+  const loop = seq(res(302, 'https://github.com/a/b'));
+  await assert.rejects(fetchChecked(item, loop), /too many redirects/);
+  assert.equal(loop.calls.length, MAX_REDIRECTS + 1);
+
+  // exactly MAX_REDIRECTS hops then a 200 still succeeds
+  const rs = Array.from({ length: MAX_REDIRECTS }, () => res(302, 'https://github.com/a/b')).concat(res(200));
+  assert.equal((await fetchChecked(item, seq(...rs))).status, 200);
+
+  // https -> http is allowed only to the Sony host
+  const sony = seq(res(302, 'http://dus01.ps3.update.playstation.net/f'), res(200));
+  assert.equal((await fetchChecked(item, sony)).status, 200);
+});
+
+test('firmwareStampOk: only a stamp matching version and sha256 counts', async () => {
+  const { firmwareStampOk, FW_STAMP } = await load();
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'uemu-bw-'));
+  const fw = { version: '4.93', sha256: 'a'.repeat(64) };
+  try {
+    assert.equal(firmwareStampOk(d, fw), false, 'no stamp');
+    fs.writeFileSync(path.join(d, FW_STAMP), JSON.stringify({ version: '4.93', sha256: 'a'.repeat(64) }));
+    assert.equal(firmwareStampOk(d, fw), true);
+    fs.writeFileSync(path.join(d, FW_STAMP), JSON.stringify({ version: '4.92', sha256: 'a'.repeat(64) }));
+    assert.equal(firmwareStampOk(d, fw), false, 'version mismatch');
+    fs.writeFileSync(path.join(d, FW_STAMP), JSON.stringify({ version: '4.93', sha256: 'b'.repeat(64) }));
+    assert.equal(firmwareStampOk(d, fw), false, 'sha mismatch');
+    fs.writeFileSync(path.join(d, FW_STAMP), '{not json');
+    assert.equal(firmwareStampOk(d, fw), false, 'malformed');
+  } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+
+test('isPackagingDir: only the bundle-win/emulators output dir', async () => {
+  const { isPackagingDir } = await load();
+  assert.equal(isPackagingDir(path.resolve(root, 'bundle-win/emulators')), true);
+  assert.equal(isPackagingDir(path.resolve(root, 'bin')), false);
+  assert.equal(isPackagingDir(path.resolve(root, 'bundle-win')), false);
+  assert.equal(isPackagingDir(path.resolve(root, 'bundle-win/emulators/rpcs3')), true, 'inside the packaging dir');
+  assert.equal(isPackagingDir(path.resolve(root, 'bundle-win/cache')), false);
+  assert.equal(isPackagingDir(path.resolve(root, 'bundle-win/emulators-other')), false);
+  if (process.platform === 'win32') assert.equal(isPackagingDir(path.resolve(root, 'BUNDLE-WIN/Emulators')), true);
+});
+
+test('--ps3-firmware is handled inside main() only; --no-ps3-firmware is not exported anywhere', async () => {
+  const m = await load();
+  for (const k of ['parseNoFirmware', 'parseArgs', 'noPs3Firmware', 'parsePs3Firmware']) assert.equal(typeof m[k], 'undefined', k);
+});
+
+test('package.json win extraResources filter excludes RPCS3 runtime data and user dirs', () => {
+  const entry = pkg().build.win.extraResources.find((x) => x.from === 'bundle-win/emulators');
+  assert.ok(entry.filter.includes('**/*'));
+  for (const f of ['rpcs3/dev_flash/**', 'rpcs3/dev_hdd0/**', 'rpcs3/log/**', '**/.uemulator-ps3fw.json', 'lichii/user/**', 'ryujinx/portable/**']) {
+    assert.ok(entry.filter.includes('!' + f), f);
+  }
 });

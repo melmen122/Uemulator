@@ -220,6 +220,10 @@ function harness(settings, system = 'switch', { keys = true } = {}) {
     fs.mkdirSync(kd, { recursive: true });
     fs.writeFileSync(path.join(kd, 'prod.keys'), 'master_key_00 = 00\n');
   }
+  // Ryujinx keys (separate from Lichii's) so launching via ryujinx passes its own preflight.
+  const rk = path.join(dir, '.config', 'Ryujinx', 'system');
+  fs.mkdirSync(rk, { recursive: true });
+  fs.writeFileSync(path.join(rk, 'prod.keys'), 'master_key_00 = 00\n');
   const store = createStore({ dir });
   if (settings) store.setSettings(settings);
   store.setLibrary({ folders: [], games: [

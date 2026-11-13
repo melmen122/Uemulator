@@ -30,7 +30,7 @@ separation. So the plan is:
 - **Executable resolution order** for every core:
   1. a user override path in Settings
   2. a locally built binary in `bin/<id>/` (from `npm run build:cores`). In a packaged Windows app this is
-     `<resources>\emulators\<id>\`, filled from `bundle-win/` by `npm run bundle:win` (lichii, mgba, azahar, rpcs3)
+     `<resources>\emulators\<id>\`, filled from `bundle-win/` by `npm run bundle:win` (lichii, mgba, azahar, rpcs3, ryujinx, pyboy)
   3. well-known system install locations (e.g. `/Applications/mGBA.app`, Homebrew, `PATH`)
 - **Platform reality**: Project64 has no native macOS or Linux build. On macOS/Linux its adapter runs
   the user-supplied `Project64.exe` through a Wine binary (`bin/wine/` on macOS, then the app-data link,
@@ -62,7 +62,7 @@ Uemulator/
   bundle-win/                 Windows x64 emulator bundle staging (gitignored; cache/ and emulators/)
   scripts/
     build-cores.mjs           `node scripts/build-cores.mjs [coreId...]` (per-core build + toolchain checks)
-    bundle-win.mjs            `npm run bundle:win`: pinned, SHA-256-checked Windows builds into bundle-win/emulators/ (or `--out <dir>`, e.g. `--out bin`)
+    bundle-win.mjs            `npm run bundle:win`: pinned, SHA-256-checked Windows builds into bundle-win/emulators/ (or `--out <dir>`, e.g. `--out bin`). `--ps3-firmware` (dev only) also installs PS3 firmware into `<out>/rpcs3`
   src/
     main/
       main.js                 app lifecycle, BrowserWindow (hardened), IPC registration
@@ -243,7 +243,8 @@ missing toolchain never fails the others.
   taskkill stop, `window.uemu.platform`, and `%APPDATA%\uemulator\` data. The NSIS installer
   (per-user, choosable folder, desktop and Start menu shortcuts) and a portable zip are built by
   `npm run dist:win`. Both are unsigned. Unit tests pass on Windows 11; the installer is not yet run end to end. `dist:win` first runs
-  `bundle:win`, so the app ships official x64 builds of lichii, mgba, azahar and rpcs3 in
-  `resources\emulators\`. That bundled set has not been run on Windows either.
+  `bundle:win`, so the app ships official x64 builds of lichii, mgba, azahar, rpcs3, ryujinx and pyboy
+  (embedded Python) in `resources\emulators\`. PS3 firmware is not bundled. The bundle script installs it only with the
+  opt-in `--ps3-firmware` flag, into the dev tree (`--out bin`); the packaging dir is refused. Project64 is not bundled (winget). That bundled set has not been run on Windows either.
 - Not yet done: embedded play (phase 2), prebuilt core installer, real-emulator launch tests (none of
   the seven emulators, Lichii included, is installed on the dev machine), and a Windows hardware test.

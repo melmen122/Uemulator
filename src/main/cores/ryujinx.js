@@ -48,4 +48,50 @@ module.exports = {
     args.push(romPath);
     return { command: exe, args };
   },
+
+  // Directories where Ryujinx/Ryubing keeps prod.keys, highest priority first. From upstream AppDataManager
+  // (unverified this session: upstream source was unreachable): a "portable" folder next to the exe is the
+  // data root when it exists; otherwise %APPDATA%Ryujinx (Windows), ~/Library/Application Support/Ryujinx
+  // (macOS) or $XDG_CONFIG_HOME|~/.config/Ryujinx (Linux). Keys live in <root>/system; the per-user ~/.switch (KeysDirPathUser) is also read, so it is listed last.
+  keysDirs(ctx = {}) {
+    const { platform, homedir = '', env = {}, exe, fs } = ctx;
+    const P = pathFor(platform);
+    const out = [];
+    if (platform === 'win32') {
+      if (typeof exe === 'string' && exe && fs) {
+        const portable = P.join(P.dirname(exe), 'portable');
+        let isDir = false;
+        try { isDir = fs.statSync(portable).isDirectory(); } catch { isDir = false; }
+        if (isDir) out.push(P.join(portable, 'system'));
+      }
+      out.push(P.join(env.APPDATA || P.join(homedir, 'AppData', 'Roaming'), 'Ryujinx', 'system'));
+      out.push(P.join(homedir, '.switch'));
+    } else if (platform === 'darwin') {
+      out.push(P.join(homedir, 'Library', 'Application Support', 'Ryujinx', 'system'));
+      out.push(P.join(homedir, '.switch'));
+    } else {
+      out.push(P.join(env.XDG_CONFIG_HOME || P.join(homedir, '.config'), 'Ryujinx', 'system'));
+      out.push(P.join(homedir, '.switch'));
+    }
+    return out;
+  },
+
+  // Returns an error string when the game cannot be decrypted, otherwise null. Never throws.
+  preflight(game, ctx = {}) {
+    try {
+      if (!game || game.system !== 'switch') return null;
+      const fs = ctx.fs || require('fs');
+      const P = pathFor(ctx.platform);
+      const dirs = this.keysDirs({ ...ctx, fs });
+      for (const d of dirs) {
+        try {
+          const st = fs.statSync(P.join(d, 'prod.keys'));
+          if (st.isFile() && st.size > 0) return null;
+        } catch { /* not found */ }
+      }
+      return `Ryujinx can't decrypt this game: prod.keys was not found. Copy prod.keys (and title.keys) dumped from your own Switch into ${dirs[0]}, then install firmware in Ryujinx via Actions > Install Firmware. (If you already use Lichii, the same files from its keys folder, e.g. %APPDATA%\\lichii\\keys, can be copied.)`;
+    } catch {
+      return null;
+    }
+  },
 };

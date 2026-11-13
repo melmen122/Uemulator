@@ -348,3 +348,41 @@ test('game:launch ps3 fullscreen setting adds a fullscreen flag before the path'
     assert.equal(a[a.length - 1], EBOOT);
   } finally { t.cleanup(); }
 });
+
+// ---- firmware marker / preflight ----
+const ps3Game = { system: 'ps3' };
+const fsWith = (files) => ({
+  statSync: (p) => {
+    if (files.includes(p)) return { isFile: () => true, isDirectory: () => false };
+    throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+  },
+});
+
+test('rpcs3 firmwareMarker: win32 is dev_flash\\vsh\\module\\vsh.self next to the exe; null without an exe', () => {
+  assert.equal(rpcs3.firmwareMarker({ platform: 'win32', exe: 'C:\\R\\rpcs3.exe' }), 'C:\\R\\dev_flash\\vsh\\module\\vsh.self');
+  assert.equal(rpcs3.firmwareMarker({ platform: 'win32' }), null);
+  assert.equal(rpcs3.firmwareMarker({ platform: 'darwin', homedir: '/Users/u' }), '/Users/u/Library/Application Support/rpcs3/dev_flash/vsh/module/vsh.self');
+  assert.equal(rpcs3.firmwareMarker({ platform: 'linux', homedir: '/home/u', env: {} }), '/home/u/.config/rpcs3/dev_flash/vsh/module/vsh.self');
+  assert.equal(rpcs3.firmwareMarker({ platform: 'linux', homedir: '/home/u', env: { XDG_CONFIG_HOME: '/xdg' } }), '/xdg/rpcs3/dev_flash/vsh/module/vsh.self');
+});
+
+test('rpcs3 preflight win32: missing firmware is an error mentioning Install Firmware; present is null', () => {
+  const marker = 'C:\\R\\dev_flash\\vsh\\module\\vsh.self';
+  const ctx = { platform: 'win32', exe: 'C:\\R\\rpcs3.exe' };
+  const msg = rpcs3.preflight(ps3Game, { ...ctx, fs: fsWith([]) });
+  assert.equal(typeof msg, 'string');
+  assert.match(msg, /Install Firmware/);
+  assert.match(msg, /PS3UPDAT\.PUP/);
+  assert.ok(!/bundle-win/.test(msg), msg);
+  assert.ok(msg.includes(marker), msg);
+  assert.equal(rpcs3.preflight(ps3Game, { ...ctx, fs: fsWith([marker]) }), null);
+});
+
+test('rpcs3 preflight: only enforced on win32 and only for ps3 games', () => {
+  const none = fsWith([]);
+  for (const platform of ['linux', 'darwin']) {
+    assert.equal(rpcs3.preflight(ps3Game, { platform, homedir: '/h', env: {}, exe: '/x/rpcs3', fs: none }), null, platform);
+  }
+  assert.equal(rpcs3.preflight({ system: 'gba' }, { platform: 'win32', exe: 'C:\\R\\rpcs3.exe', fs: none }), null);
+  assert.equal(rpcs3.preflight(null, { platform: 'win32', exe: 'C:\\R\\rpcs3.exe', fs: none }), null);
+});

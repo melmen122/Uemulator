@@ -125,8 +125,8 @@ test('project64 candidates are empty off win32', () => {
   assert.deepEqual(cores.getCore('project64').candidates({ platform: 'linux', binDir: '/b', homedir: '/h', env: {} }), []);
 });
 
-test('pyboy win32 has exactly one candidate: venv\\Scripts\\python.exe', () => {
-  assert.deepEqual(cores.getCore('pyboy').candidates(ctx()), ['C:\\app\\bin\\pyboy\\venv\\Scripts\\python.exe']);
+test('pyboy win32 candidates: bundled embedded python.exe, then venv\\Scripts\\python.exe', () => {
+  assert.deepEqual(cores.getCore('pyboy').candidates(ctx()), ['C:\\app\\bin\\pyboy\\python\\python.exe', 'C:\\app\\bin\\pyboy\\venv\\Scripts\\python.exe']);
 });
 
 test('windows candidates resolve through resolveExecutable (built is source "built", Program Files is "system")', () => {

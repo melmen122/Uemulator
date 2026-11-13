@@ -66,4 +66,33 @@ module.exports = {
     args.push(romPath); // must be last (and the only positional argument)
     return { command: exe, args };
   },
+
+  // RPCS3 firmware marker: vsh.self in dev_flash. Windows: portable layout, dev_flash next to rpcs3.exe.
+  // macOS/Linux: the config dir (~/Library/Application Support/rpcs3 or $XDG_CONFIG_HOME|~/.config/rpcs3) -
+  // not verified against upstream, so preflight only enforces it on Windows.
+  firmwareMarker(ctx = {}) {
+    const { platform, homedir = '', env = {}, exe } = ctx;
+    const P = pathFor(platform);
+    const rel = ['dev_flash', 'vsh', 'module', 'vsh.self'];
+    if (platform === 'win32') {
+      return typeof exe === 'string' && exe ? P.join(P.dirname(exe), ...rel) : null;
+    }
+    if (platform === 'darwin') return P.join(homedir, 'Library', 'Application Support', 'rpcs3', ...rel);
+    return P.join(env.XDG_CONFIG_HOME || P.join(homedir, '.config'), 'rpcs3', ...rel);
+  },
+
+  // Returns an error string when PS3 firmware is missing, otherwise null. Never throws.
+  preflight(game, ctx = {}) {
+    try {
+      if (!game || game.system !== 'ps3') return null;
+      if (ctx.platform !== 'win32') return null;
+      const marker = this.firmwareMarker(ctx);
+      if (!marker) return null;
+      const fs = ctx.fs || require('fs');
+      try { if (fs.statSync(marker).isFile()) return null; } catch { /* missing */ }
+      return `PS3 firmware is not installed (missing ${marker}). Install it in RPCS3 via File > Install Firmware, using PS3UPDAT.PUP from playstation.com (the official Sony download).`;
+    } catch {
+      return null;
+    }
+  },
 };

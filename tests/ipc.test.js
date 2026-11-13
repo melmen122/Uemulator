@@ -117,8 +117,9 @@ function harness(extraGames = games, settings) {
     store,
     processes: { start: async (x) => { started.push(x); return { pid: 1, sessionId: 's' }; }, stop() {}, list: () => [] },
     dialog: {}, shell: { openExternal: async (u) => { opened.push(u); } }, getWindow: () => null,
-    fs: { ...fs, statSync: (p) => (p === '/r/g.gba' || p === '/r/g.nsp' || p === '/r/g.z64' ? { isFile: () => true, isDirectory: () => false } : fs.statSync(p)) },
-    platform: 'linux',
+    // Fake home with a non-empty Ryujinx prod.keys so the Ryujinx keys preflight passes without touching the real home.
+    fs: { ...fs, statSync: (p) => (p === '/r/g.gba' || p === '/r/g.nsp' || p === '/r/g.z64' ? { isFile: () => true, isDirectory: () => false } : p === '/h/.config/Ryujinx/system/prod.keys' ? { isFile: () => true, isDirectory: () => false, size: 10 } : fs.statSync(p)) },
+    platform: 'linux', homedir: '/h', env: {},
     resolveDeps: { existsSync: (p) => p === '/usr/bin/mgba-qt' || p === '/usr/bin/Ryujinx', platform: 'linux', which: () => null, binDir: '/nobin', homedir: '/h', env: {} },
   });
   return { h, store, started, opened, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };

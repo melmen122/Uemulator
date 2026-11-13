@@ -53,8 +53,8 @@ Extension matching is case-insensitive.
 - The scanner does not descend into subfolders of `USRDIR`. Other `EBOOT.BIN` files are ignored.
 - The title comes from `TITLE` in the sibling `PARAM.SFO` when it can be read. Otherwise it uses the
   game folder name.
-- RPCS3 needs PS3 firmware (`PS3UPDAT.PUP`) installed inside RPCS3 before games boot. Uemulator does
-  not install firmware.
+- RPCS3 needs PS3 firmware (`PS3UPDAT.PUP`) installed inside RPCS3 before games boot. The installed
+  app does not install firmware. See [Windows](#windows).
 
 Upstream links come from `.gitmodules`. Each core keeps its own license; see `cores/<id>/` for the
 full text.
@@ -156,7 +156,7 @@ node scripts/bundle-win.mjs --out bin
 npm start
 ```
 
-`--out bin` fills `bin\` with the four bundled emulators, which is where `npm start` looks for them.
+`--out bin` fills `bin\` with the six bundled emulators, which is where `npm start` looks for them.
 Archives are cached in `bundle-win\cache\`. For an installer instead, run `npm run dist:win`. The
 output goes to `dist\`.
 
@@ -164,8 +164,21 @@ output goes to `dist\`.
 2. Switch keys: put `prod.keys` and `title.keys`, dumped from your own console, in `%APPDATA%\lichii\keys\`.
    If a `user` folder exists next to `lichii.exe`, Lichii checks `user\keys\` first.
 3. Install Switch firmware inside Lichii with Tools > Install Firmware.
-4. Ryujinx, Project64 and PyBoy are not bundled on Windows. Install them, then choose the `.exe` with
-   **Set path…** on the Cores view.
+4. Project64 is the only core not bundled on Windows. Install it with the command in the table below.
+5. Ryujinx: copy `prod.keys` into `%APPDATA%\Ryujinx\system\` and install firmware from Actions > Install Firmware.
+6. Check the Cores view. Each card shows Ready or the reason it is not.
+
+### What you need on Windows
+
+| Core | What you need |
+|---|---|
+| mGBA (GBA, GB, GBC) | Nothing. A GBA BIOS is optional. |
+| PyBoy (GB, GBC, alternate core) | Nothing. It runs on its own embedded Python. |
+| Project64 (N64) | Not bundled. `winget install --id Project64.Project64 -e`. If the Program Files install fails without admin, run the installer per user: `/VERYSILENT /CURRENTUSER /DIR="%LOCALAPPDATA%\Programs\Project64 3.0"`. Uemulator finds either folder. |
+| Azahar (3DS) | Decrypted ROMs. |
+| RPCS3 (PS3) | Not included. Install it in RPCS3 with File > Install Firmware and `PS3UPDAT.PUP` from playstation.com. Without firmware, Uemulator refuses to start a PS3 game and says how to install it. The dev bundle (`--ps3-firmware`, see below) can install PS3UPDAT.PUP 4.93 for you; click **Yes** when RPCS3 asks "Install firmware?". |
+| Ryujinx (Switch, alternate core) | `prod.keys` (and `title.keys`) from your own console in `%APPDATA%\Ryujinx\system\`, in `portable\system\` next to `Ryujinx.exe`, or in `%USERPROFILE%\.switch\`. Firmware: Actions > Install Firmware. Without `prod.keys`, Uemulator refuses to start the game. |
+| Lichii (Switch, Switch 2) | `prod.keys` and `title.keys` in `%APPDATA%\lichii\keys\`. Firmware: Tools > Install Firmware. |
 
 ### Ocarina of Time on an NVIDIA GPU
 
@@ -223,7 +236,7 @@ files are accepted.
 
 ### Bundled emulators
 
-`npm run dist:win` ships official Windows x64 builds of four cores inside the app, so they work
+`npm run dist:win` ships official Windows x64 builds of six cores inside the app, so they work
 without a separate install:
 
 | Core | Version | Systems | Bundled executable |
@@ -232,32 +245,46 @@ without a separate install:
 | mGBA | 0.10.5 | GBA, GB, GBC | `mgba\mGBA.exe` |
 | Azahar | 2126.2 | 3DS | `azahar\azahar.exe` |
 | RPCS3 | 0.0.43-20574 | PS3 | `rpcs3\rpcs3.exe` |
+| Ryujinx (Ryubing) | 1.3.3 | Switch (alternate) | `ryujinx\Ryujinx.exe` |
+| PyBoy | 2.9.0, embedded Python 3.13.17 | GB, GBC (alternate) | `pyboy\python\python.exe` |
 
-- Project64, Ryujinx and PyBoy are not bundled. Install them as described below.
-- Keys, firmware and games are never bundled. RPCS3 still needs PS3 firmware installed inside RPCS3.
+- Project64 is the only core not bundled. Install it as described in [What you need on Windows](#what-you-need-on-windows).
+- Keys, games and PS3 firmware are never bundled, and neither is Switch firmware. The `--ps3-firmware`
+  flag installs PS3 firmware only into the dev tree (for example `bin\rpcs3\dev_flash`). The packaging
+  directory is refused.
 - The bundled set has not been run on Windows.
 
 To rebuild the bundle, run this on a machine with network access:
 
 ```sh
-npm run bundle:win                 # download, verify and extract the four builds
+npm run bundle:win                 # download, verify and extract the six builds
 npm run bundle:win -- --force      # re-extract even when the bundle is up to date
+node scripts/bundle-win.mjs --out bin --ps3-firmware   # dev only: also install PS3 firmware into bin\rpcs3
 node scripts/bundle-win.mjs --out bin   # dev mode: fill <repo>\bin for npm start
 ```
 
 The script (`scripts/bundle-win.mjs`) downloads each archive into `bundle-win/cache/`, checks its
 SHA-256 against the pinned value, rejects archives with unsafe entry paths, and extracts it with
-`bsdtar` into `bundle-win/emulators/<id>/` (or the `--out` folder). `bsdtar` ships with macOS. On
+`bsdtar` into `bundle-win/emulators/<id>/` (or the `--out` folder).
+Downloads are limited to an allowlist of hosts: github.com, git.ryujinx.app, www.python.org,
+files.pythonhosted.org and dus01.ps3.update.playstation.net. Every redirect hop is checked against the
+same list, plus the GitHub release-asset hosts (release-assets.githubusercontent.com and
+objects.githubusercontent.com), which are accepted only as redirect targets. At most 5 redirects are
+followed. Sony's PS3 update host serves plain http only, so that one file is fetched over http, and
+only from that host. Every download is checked against its pinned SHA-256. `bsdtar` ships with macOS. On
 Windows 10+ the script uses `%SystemRoot%\System32\tar.exe`, which is libarchive's bsdtar, and accepts
 it only if `--version` reports bsdtar or libarchive. On Linux, install `libarchive-tools`. The versions and hashes are pinned in the `MANIFEST` in that script. The
 mGBA hash comes from the first download, because upstream publishes no checksum for that file. `bundle-win/`
 is gitignored. `npm run dist:win` runs `bundle:win` first, and the electron-builder
-`extraResources` setting copies the result into the app's `resources\emulators\`.
+`extraResources` setting copies the result into the app's `resources\emulators\`. The
+`extraResources` filter in `package.json` leaves out emulator runtime and user data: RPCS3 `dev_*`
+folders, logs, config and GuiConfigs files, savestates and screenshots; Lichii `user\`; Ryujinx
+`portable\`; and the firmware stamp.
 
-A bundled copy is checked before any system install, so a copy of one of these four in
+A bundled copy is checked before any system install, so a copy of one of these six in
 `Program Files` is used only when the bundled copy is missing.
 
-Official Windows downloads (for Project64, Ryujinx and PyBoy, or for a different version of the four above):
+Official Windows downloads (for Project64, or for a different version of a bundled core):
 
 | Core | Systems | Download | File to choose |
 |---|---|---|---|
@@ -267,9 +294,10 @@ Official Windows downloads (for Project64, Ryujinx and PyBoy, or for a different
 | Lichii (experimental) | Switch, Switch 2 | https://github.com/zortos293/Lichii/releases | `lichii.exe` (folder with its Qt DLLs; choose the exe inside) |
 | RPCS3 | PS3 | https://rpcs3.net | `rpcs3.exe` (portable build, extract anywhere) |
 | Project64 3.x | N64 | https://www.pj64-emu.com | `Project64.exe`. Install to `C:\Program Files (x86)\Project64 3.0`, or use the zip. |
-| PyBoy | GB, GBC (optional) | `npm run build:cores -- pyboy` | `bin\pyboy\venv\Scripts\python.exe`, or `pyboy.exe` on PATH |
+| PyBoy | GB, GBC (optional) | `npm run build:cores -- pyboy` | `bin\pyboy\python\python.exe` (bundled), `bin\pyboy\venv\Scripts\python.exe`, or `pyboy.exe` on PATH |
 
-RPCS3 needs PS3 firmware installed inside RPCS3 before games boot. Uemulator does not install it.
+PS3 games need PS3 firmware in RPCS3. The installed app does not include or install it. In RPCS3, use
+File > Install Firmware with `PS3UPDAT.PUP` from playstation.com (the official Sony download).
 
 ### Building cores on Windows (optional)
 

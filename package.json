@@ -54,7 +54,34 @@
           "from": "bundle-win/emulators",
           "to": "emulators",
           "filter": [
-            "**/*"
+            "**/*",
+            "!**/.uemulator-ps3fw.json",
+            "!rpcs3/dev_bdvd/**",
+            "!rpcs3/dev_flash/**",
+            "!rpcs3/dev_flash2/**",
+            "!rpcs3/dev_flash3/**",
+            "!rpcs3/dev_hdd0/**",
+            "!rpcs3/dev_hdd1/**",
+            "!rpcs3/dev_usb000/**",
+            "!rpcs3/log/**",
+            "!rpcs3/*.log",
+            "!rpcs3/*.buf",
+            "!rpcs3/captures/**",
+            "!rpcs3/shaderlog/**",
+            "!rpcs3/ppu_progs/**",
+            "!rpcs3/spu_progs/**",
+            "!rpcs3/savestates/**",
+            "!rpcs3/screenshots/**",
+            "!rpcs3/patches/**",
+            "!rpcs3/games/**",
+            "!rpcs3/games.yml",
+            "!rpcs3/config/**/*.yml",
+            "!rpcs3/config/custom_configs/**",
+            "!rpcs3/GuiConfigs/*.ini",
+            "!rpcs3/GuiConfigs/persistent_settings.dat",
+            "!rpcs3/cache/**",
+            "!lichii/user/**",
+            "!ryujinx/portable/**"
           ]
         }
       ]
