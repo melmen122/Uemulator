@@ -52,22 +52,32 @@ module.exports = {
     return out;
   },
 
-  // Directories where Lichii (Eden/yuzu fork) looks for prod.keys, most likely first.
+  // Directories where Lichii (Eden/yuzu fork) looks for prod.keys, highest priority first.
+  // Upstream (src/common/fs/fs_paths.h, path_util.cpp): user root is "lichii" (EDEN_DIR), keys live in <root>/keys,
+  // the old "eden" root (EDEN_LEGACY_DIR) is only a legacy/import source, and on Windows a "user" folder next to
+  // the exe (PORTABLE_DIR) overrides %APPDATA%. On other platforms upstream resolves $XDG_DATA_HOME/lichii (also on
+  // macOS, i.e. ~/.local/share/lichii) and its portable "user" dir is relative to the current directory.
   keysDirs(ctx = {}) {
     const { platform, homedir = '', env = {}, exe, fs } = ctx;
     const P = pathFor(platform);
     const out = [];
-    if (platform === 'win32') {
-      out.push(P.join(env.APPDATA || P.join(homedir, 'AppData', 'Roaming'), 'eden', 'keys'));
-    } else {
-      out.push(P.join(env.XDG_DATA_HOME || P.join(homedir, '.local', 'share'), 'eden', 'keys'));
-    }
-    // Portable mode: a "user" directory next to the executable.
-    if (typeof exe === 'string' && exe && fs) {
+    const portable = () => {
+      if (typeof exe !== 'string' || !exe || !fs) return null;
       const userDir = P.join(P.dirname(exe), 'user');
       let isDir = false;
       try { isDir = fs.statSync(userDir).isDirectory(); } catch { isDir = false; }
-      if (isDir) out.push(P.join(userDir, 'keys'));
+      return isDir ? P.join(userDir, 'keys') : null;
+    };
+    if (platform === 'win32') {
+      const portableKeys = portable();
+      if (portableKeys) out.push(portableKeys);
+      const roaming = env.APPDATA || P.join(homedir, 'AppData', 'Roaming');
+      out.push(P.join(roaming, 'lichii', 'keys'), P.join(roaming, 'eden', 'keys'));
+    } else {
+      const data = env.XDG_DATA_HOME || P.join(homedir, '.local', 'share');
+      out.push(P.join(data, 'lichii', 'keys'), P.join(data, 'eden', 'keys'));
+      const portableKeys = portable();
+      if (portableKeys) out.push(portableKeys);
     }
     return out;
   },

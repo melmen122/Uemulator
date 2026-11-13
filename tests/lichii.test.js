@@ -305,18 +305,18 @@ const mkfile = (p, body) => { fs.mkdirSync(path.dirname(p), { recursive: true })
 const swGame = { system: 'switch', path: '/r/x.nsp' };
 
 test('lichii keysDirs: linux/darwin use XDG_DATA_HOME or ~/.local/share; win32 uses APPDATA', () => {
-  assert.deepEqual(lichii.keysDirs({ platform: 'linux', homedir: '/home/u', env: {} }), ['/home/u/.local/share/eden/keys']);
-  assert.deepEqual(lichii.keysDirs({ platform: 'darwin', homedir: '/Users/u', env: {} }), ['/Users/u/.local/share/eden/keys']);
-  assert.deepEqual(lichii.keysDirs({ platform: 'linux', homedir: '/home/u', env: { XDG_DATA_HOME: '/x/data' } }), ['/x/data/eden/keys']);
-  assert.deepEqual(lichii.keysDirs({ platform: 'win32', homedir: 'C:\\Users\\u', env: { APPDATA: 'D:\\Roam' } }), ['D:\\Roam\\eden\\keys']);
-  assert.deepEqual(lichii.keysDirs({ platform: 'win32', homedir: 'C:\\Users\\u', env: {} }), ['C:\\Users\\u\\AppData\\Roaming\\eden\\keys']);
+  assert.deepEqual(lichii.keysDirs({ platform: 'linux', homedir: '/home/u', env: {} }), ['/home/u/.local/share/lichii/keys', '/home/u/.local/share/eden/keys']);
+  assert.deepEqual(lichii.keysDirs({ platform: 'darwin', homedir: '/Users/u', env: {} }), ['/Users/u/.local/share/lichii/keys', '/Users/u/.local/share/eden/keys']);
+  assert.deepEqual(lichii.keysDirs({ platform: 'linux', homedir: '/home/u', env: { XDG_DATA_HOME: '/x/data' } }), ['/x/data/lichii/keys', '/x/data/eden/keys']);
+  assert.deepEqual(lichii.keysDirs({ platform: 'win32', homedir: 'C:\\Users\\u', env: { APPDATA: 'D:\\Roam' } }), ['D:\\Roam\\lichii\\keys', 'D:\\Roam\\eden\\keys']);
+  assert.deepEqual(lichii.keysDirs({ platform: 'win32', homedir: 'C:\\Users\\u', env: {} }), ['C:\\Users\\u\\AppData\\Roaming\\lichii\\keys', 'C:\\Users\\u\\AppData\\Roaming\\eden\\keys']);
 });
 
 test('lichii preflight: missing prod.keys -> message naming the expected dir', () => {
   for (const platform of ['linux', 'darwin']) {
     const msg = lichii.preflight(swGame, { platform, homedir: dir, env: {}, exe: '/nope/lichii', fs });
     assert.match(msg, KEY_MSG);
-    assert.ok(msg.includes(path.join(dir, '.local', 'share', 'eden', 'keys')));
+    assert.ok(msg.includes(path.posix.join(dir, '.local', 'share', 'lichii', 'keys')));
     assert.match(msg, /NCA file has a bad header/);
   }
 });
@@ -341,19 +341,43 @@ test('lichii preflight: switch2 is not enforced; other systems ignored', () => {
 });
 
 test('lichii preflight: portable user/keys/prod.keys beside the exe passes', () => {
-  const exeDir = path.join(dir, 'app');
-  const exe = path.join(exeDir, 'lichii');
-  const c = { platform: 'linux', homedir: path.join(dir, 'home'), env: {}, exe, fs };
-  mkfile(exe, '');
-  fs.mkdirSync(path.join(exeDir, 'user'), { recursive: true });
+  // Platform is injected as linux, so use posix-style fake paths and a fake fs (host path.join would be win32 on Windows).
+  const files = {};
+  const dirs = new Set(['/opt/app/user']);
+  const fakefs = {
+    statSync(p) {
+      if (dirs.has(p)) return { isFile: () => false, isDirectory: () => true, size: 0 };
+      if (p in files) return { isFile: () => true, isDirectory: () => false, size: files[p] };
+      throw new Error('ENOENT');
+    },
+  };
+  const c = { platform: 'linux', homedir: '/home/u', env: {}, exe: '/opt/app/lichii', fs: fakefs };
   assert.match(lichii.preflight(swGame, c), KEY_MSG);
-  mkfile(path.join(exeDir, 'user', 'keys', 'prod.keys'), 'k');
+  files['/opt/app/user/keys/prod.keys'] = 1;
   assert.equal(lichii.preflight(swGame, c), null);
-  assert.equal(lichii.keysDirs(c).length, 2);
+  assert.deepEqual(lichii.keysDirs(c), ['/home/u/.local/share/lichii/keys', '/home/u/.local/share/eden/keys', '/opt/app/user/keys']);
+});
+
+test('lichii preflight: win32 portable user\\keys beside the exe takes priority', () => {
+  const files = { 'C:\\nope\\user\\keys\\prod.keys': 4 };
+  const fakefs = {
+    statSync(p) {
+      if (p === 'C:\\nope\\user') return { isFile: () => false, isDirectory: () => true, size: 0 };
+      if (p in files) return { isFile: () => true, isDirectory: () => false, size: files[p] };
+      throw new Error('ENOENT');
+    },
+  };
+  const c = { platform: 'win32', homedir: 'C:\\Users\\u', env: { APPDATA: 'D:\\Roam' }, exe: 'C:\\nope\\lichii.exe', fs: fakefs };
+  assert.equal(lichii.preflight(swGame, c), null);
+  assert.deepEqual(lichii.keysDirs(c), ['C:\\nope\\user\\keys', 'D:\\Roam\\lichii\\keys', 'D:\\Roam\\eden\\keys']);
+  // no user dir -> portable path is not offered
+  const noUser = { statSync() { throw new Error('ENOENT'); } };
+  assert.equal(lichii.keysDirs({ ...c, fs: noUser })[0], 'D:\\Roam\\lichii\\keys');
 });
 
 test('lichii preflight: win32 uses APPDATA (fake fs; win32 paths are not real on this host)', () => {
-  const keys = 'D:\\Roam\\eden\\keys\\prod.keys';
+  const keys = 'D:\\Roam\\lichii\\keys\\prod.keys';
+  const legacy = 'D:\\Roam\\eden\\keys\\prod.keys';
   const mkfs = (files) => ({
     statSync(p) {
       if (!(p in files)) throw new Error('ENOENT');
@@ -363,9 +387,11 @@ test('lichii preflight: win32 uses APPDATA (fake fs; win32 paths are not real on
   const c = { platform: 'win32', homedir: 'C:\\Users\\u', env: { APPDATA: 'D:\\Roam' }, exe: 'C:\\nope\\lichii.exe' };
   const msg = lichii.preflight(swGame, { ...c, fs: mkfs({}) });
   assert.match(msg, KEY_MSG);
-  assert.ok(msg.includes('D:\\Roam\\eden\\keys'));
+  assert.ok(msg.includes('D:\\Roam\\lichii\\keys'));
   assert.equal(lichii.preflight(swGame, { ...c, fs: mkfs({ [keys]: 5 }) }), null);
   assert.match(lichii.preflight(swGame, { ...c, fs: mkfs({ [keys]: 0 }) }), KEY_MSG);
+  // legacy eden dir still accepted
+  assert.equal(lichii.preflight(swGame, { ...c, fs: mkfs({ [legacy]: 5 }) }), null);
 });
 
 test('lichii preflight never throws (broken fs treated as not found)', () => {

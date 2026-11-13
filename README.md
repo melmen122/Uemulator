@@ -140,9 +140,43 @@ Uemulator downloads the Gcenx build itself. It does not use neutron's Steam brid
 
 ## Windows
 
-Uemulator runs on Windows x64. Project64 runs natively there, so no Wine is needed. The Windows
-build has not been run on a real Windows machine yet. Treat it as untested until you have checked it.
-The bundled emulators (see [Bundled emulators](#bundled-emulators)) have not been run on Windows either.
+Uemulator runs on Windows x64. Project64 runs natively there, so no Wine is needed. The unit tests
+(332) pass on Windows 11. The installer and the app have not been run end to end on Windows yet, and
+the bundled emulators (see [Bundled emulators](#bundled-emulators)) have not been play-tested there.
+
+### Windows quick start
+
+From source (dev mode, needs network access once):
+
+```bat
+git clone --recurse-submodules <repo-url> uemulator
+cd uemulator
+npm install
+node scripts/bundle-win.mjs --out bin
+npm start
+```
+
+`--out bin` fills `bin\` with the four bundled emulators, which is where `npm start` looks for them.
+Archives are cached in `bundle-win\cache\`. For an installer instead, run `npm run dist:win`. The
+output goes to `dist\`.
+
+1. Add your ROM folder on the Library page (see [First run](#first-run)).
+2. Switch keys: put `prod.keys` and `title.keys`, dumped from your own console, in `%APPDATA%\lichii\keys\`.
+   If a `user` folder exists next to `lichii.exe`, Lichii checks `user\keys\` first.
+3. Install Switch firmware inside Lichii with Tools > Install Firmware.
+4. Ryujinx, Project64 and PyBoy are not bundled on Windows. Install them, then choose the `.exe` with
+   **Set path…** on the Cores view.
+
+### Ocarina of Time on an NVIDIA GPU
+
+The Ocarina of Time remake is a Switch 2 `.nup` (title ID `0400486024DEC000`). In Lichii's Graphics
+settings:
+
+- Enable **Use NVIDIA DLSS** (`nvidia_dlss`). Click its download button to fetch the NVIDIA
+  DLSS/Streamline runtime. You must accept NVIDIA's license.
+- Quality: Automatic or Quality. Preset: K (Quality/Balanced) or M (Performance).
+- Keep `oot_anti_aliasing` at Game. `NoSharpening` is a workaround for Mac GPUs.
+- Leave the resolution scale at its default.
 
 ### Install
 
@@ -177,7 +211,8 @@ Library page. Windows folder rules:
 Auto-detect looks in these places, in this order:
 
 1. The bundled emulators. In the installed app this is `<install folder>\resources\emulators\<id>\`.
-   With `npm start` it is `bin\<id>\` in the repo, built by `npm run build:cores`.
+   With `npm start` it is `bin\<id>\` in the repo, filled by `node scripts/bundle-win.mjs --out bin` or
+   built by `npm run build:cores`.
 2. `Program Files`, `Program Files (x86)` and `ProgramW6432`.
 3. `%LOCALAPPDATA%\Programs`, then `%LOCALAPPDATA%`.
 4. Your home folder and the drive root, one folder deep, for example `C:\mGBA\mGBA.exe`.
@@ -193,7 +228,7 @@ without a separate install:
 
 | Core | Version | Systems | Bundled executable |
 |---|---|---|---|
-| Lichii (experimental) | build-130 (PGO) | Switch, Switch 2 | `lichii\lichii.exe` |
+| Lichii (experimental) | build-160 (non-PGO) | Switch, Switch 2 | `lichii\lichii.exe` |
 | mGBA | 0.10.5 | GBA, GB, GBC | `mgba\mGBA.exe` |
 | Azahar | 2126.2 | 3DS | `azahar\azahar.exe` |
 | RPCS3 | 0.0.43-20574 | PS3 | `rpcs3\rpcs3.exe` |
@@ -207,12 +242,14 @@ To rebuild the bundle, run this on a machine with network access:
 ```sh
 npm run bundle:win                 # download, verify and extract the four builds
 npm run bundle:win -- --force      # re-extract even when the bundle is up to date
+node scripts/bundle-win.mjs --out bin   # dev mode: fill <repo>\bin for npm start
 ```
 
 The script (`scripts/bundle-win.mjs`) downloads each archive into `bundle-win/cache/`, checks its
 SHA-256 against the pinned value, rejects archives with unsafe entry paths, and extracts it with
-`bsdtar` into `bundle-win/emulators/<id>/`. `bsdtar` ships with macOS and Windows 10+. On Linux,
-install `libarchive-tools`. The versions and hashes are pinned in the `MANIFEST` in that script. The
+`bsdtar` into `bundle-win/emulators/<id>/` (or the `--out` folder). `bsdtar` ships with macOS. On
+Windows 10+ the script uses `%SystemRoot%\System32\tar.exe`, which is libarchive's bsdtar, and accepts
+it only if `--version` reports bsdtar or libarchive. On Linux, install `libarchive-tools`. The versions and hashes are pinned in the `MANIFEST` in that script. The
 mGBA hash comes from the first download, because upstream publishes no checksum for that file. `bundle-win/`
 is gitignored. `npm run dist:win` runs `bundle:win` first, and the electron-builder
 `extraResources` setting copies the result into the app's `resources\emulators\`.
@@ -261,7 +298,8 @@ Windows yet.
 
 ### Windows limitations
 
-- Not tested on real Windows hardware yet.
+- Only the unit tests have been run on Windows (Windows 11). The installer and the app have not been run
+  end to end there.
 - Unsigned. SmartScreen may block the first run.
 - Stop asks the emulator to close. If it has not exited after about 5 seconds, Uemulator force-ends its
   whole process tree, so unsaved progress can be lost.
@@ -307,7 +345,7 @@ the button on the Running panel.
 ## Development
 
 ```sh
-npm test          # node --test "tests/**/*.test.js" (255 unit tests)
+npm test          # node --test "tests/**/*.test.js" (332 unit tests)
 npm start         # run the app
 npm run dist      # electron-builder packaging
 npm run bundle:win  # fetch and verify the bundled Windows emulators (see Windows)
@@ -357,8 +395,8 @@ plan.md          architecture and contracts
 - No prebuilt core installer. Cores must be built locally or installed by hand.
 - Build paths for cmake, .NET and RPCS3 are untested on the development machine. None of the seven
   emulators is installed there, so real-emulator launches are untested.
-- The Windows x64 build has not been run on a real Windows machine. Installer, auto-detect, Stop,
-  Project64 and the bundled emulators are all unverified there. See [Windows](#windows).
+- Windows x64: the unit tests pass on Windows 11. The installer, auto-detect, Stop, Project64 and the
+  bundled emulators have not been run end to end there. See [Windows](#windows).
 - Project64 on macOS runs under Wine and Rosetta 2. Only the Wine runtime has been checked here
   (`wine --version` and a `cmd /c ver` smoke test). Project64 itself has not been run under Wine in
   this repo.

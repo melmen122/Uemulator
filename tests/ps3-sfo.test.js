@@ -141,7 +141,9 @@ test('SFO title: curly apostrophe and underscores are preserved', async () => {
 });
 
 test('folder title: control/format chars stripped, whitespace collapsed, underscores become spaces', async () => {
-  touch('Ga‮me​ \u0001_  One⁦/PS3_GAME/USRDIR/EBOOT.BIN');
+  // NTFS rejects U+0001 in names, so only include it where the filesystem allows it.
+  const raw = 'Ga\u202eme\u200b ' + (posix ? '\u0001' : '') + '_  One\u2066';
+  touch(`${raw}/PS3_GAME/USRDIR/EBOOT.BIN`);
   await both((g) => assert.equal(g[0].title, 'Game One'));
 });
 

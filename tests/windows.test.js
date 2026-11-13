@@ -471,51 +471,57 @@ function fakeLibFs(tree, real = {}, linkTargets = {}) {
   };
 }
 
+const P = (p) => path.resolve(p);
+
 test('library skips $RECYCLE.BIN and System Volume Information in any case', () => {
   const tree = {
-    '/roms': [['$RECYCLE.BIN', 'dir'], ['$Recycle.Bin', 'dir'], ['System Volume Information', 'dir'], ['SYSTEM VOLUME INFORMATION', 'dir'], ['ok', 'dir']],
-    '/roms/$RECYCLE.BIN': [['x.gba', 'file']],
-    '/roms/$Recycle.Bin': [['x.gba', 'file']],
-    '/roms/System Volume Information': [['x.gba', 'file']],
-    '/roms/SYSTEM VOLUME INFORMATION': [['x.gba', 'file']],
-    '/roms/ok': [['good.gba', 'file']],
+    [P('/roms')]: [['$RECYCLE.BIN', 'dir'], ['$Recycle.Bin', 'dir'], ['System Volume Information', 'dir'], ['SYSTEM VOLUME INFORMATION', 'dir'], ['ok', 'dir']],
+    [path.join(P('/roms'), '$RECYCLE.BIN')]: [['x.gba', 'file']],
+    [path.join(P('/roms'), '$Recycle.Bin')]: [['x.gba', 'file']],
+    [path.join(P('/roms'), 'System Volume Information')]: [['x.gba', 'file']],
+    [path.join(P('/roms'), 'SYSTEM VOLUME INFORMATION')]: [['x.gba', 'file']],
+    [path.join(P('/roms'), 'ok')]: [['good.gba', 'file']],
   };
   const f = fakeLibFs(tree);
-  const games = library.scanFolders(['/roms'], { fs: f });
-  assert.deepEqual(games.map((g) => g.path), ['/roms/ok/good.gba']);
-  assert.deepEqual(f.reads.sort(), ['/roms', '/roms/ok']);
+  const games = library.scanFolders([P('/roms')], { fs: f });
+  assert.deepEqual(games.map((g) => g.path), [path.join(P('/roms'), 'ok', 'good.gba')]);
+  assert.deepEqual(f.reads.sort(), [P('/roms'), path.join(P('/roms'), 'ok')].sort());
 });
 
 test('library visits a symlink loop once', () => {
-  const tree = { '/roms': [['loop', 'link'], ['a.gba', 'file']] };
-  const f = fakeLibFs(tree, { '/roms/loop': '/roms' }, { '/roms/loop': 'dir' });
-  const games = library.scanFolders(['/roms'], { fs: f });
-  assert.deepEqual(games.map((g) => g.path), ['/roms/a.gba']);
-  assert.deepEqual(f.reads, ['/roms']);
+  const roms = P('/roms');
+  const loop = path.join(roms, 'loop');
+  const tree = { [roms]: [['loop', 'link'], ['a.gba', 'file']] };
+  const f = fakeLibFs(tree, { [loop]: roms }, { [loop]: 'dir' });
+  const games = library.scanFolders([roms], { fs: f });
+  assert.deepEqual(games.map((g) => g.path), [path.join(roms, 'a.gba')]);
+  assert.deepEqual(f.reads, [roms]);
 });
 
 test('library on win32 counts a differently-cased duplicate directory once; on posix both are scanned', () => {
+  const roms = P('/roms');
   const tree = {
-    '/roms': [['one', 'dir'], ['two', 'dir']],
-    '/roms/one': [['x.gba', 'file']],
-    '/roms/two': [['x.gba', 'file']],
+    [roms]: [['one', 'dir'], ['two', 'dir']],
+    [path.join(roms, 'one')]: [['x.gba', 'file']],
+    [path.join(roms, 'two')]: [['x.gba', 'file']],
   };
-  const real = { '/roms/one': '/roms/Shared', '/roms/two': '/roms/shared' };
-  const win = library.scanFolders(['/roms'], { fs: fakeLibFs(tree, real), platform: 'win32' });
+  const real = { [path.join(roms, 'one')]: path.join(roms, 'Shared'), [path.join(roms, 'two')]: path.join(roms, 'shared') };
+  const win = library.scanFolders([roms], { fs: fakeLibFs(tree, real), platform: 'win32' });
   assert.equal(win.length, 1);
-  const posix = library.scanFolders(['/roms'], { fs: fakeLibFs(tree, real), platform: 'linux' });
+  const posix = library.scanFolders([roms], { fs: fakeLibFs(tree, real), platform: 'linux' });
   assert.equal(posix.length, 2);
 });
 
 test('library async scan applies the same win32 rules', async () => {
+  const roms = P('/roms');
   const tree = {
-    '/roms': [['one', 'dir'], ['two', 'dir'], ['$RECYCLE.BIN', 'dir']],
-    '/roms/one': [['x.gba', 'file']],
-    '/roms/two': [['x.gba', 'file']],
-    '/roms/$RECYCLE.BIN': [['y.gba', 'file']],
+    [roms]: [['one', 'dir'], ['two', 'dir'], ['$RECYCLE.BIN', 'dir']],
+    [path.join(roms, 'one')]: [['x.gba', 'file']],
+    [path.join(roms, 'two')]: [['x.gba', 'file']],
+    [path.join(roms, '$RECYCLE.BIN')]: [['y.gba', 'file']],
   };
-  const real = { '/roms/one': '/roms/Shared', '/roms/two': '/roms/shared' };
-  const games = await library.scanFoldersAsync(['/roms'], { fs: fakeLibFs(tree, real), platform: 'win32' });
+  const real = { [path.join(roms, 'one')]: path.join(roms, 'Shared'), [path.join(roms, 'two')]: path.join(roms, 'shared') };
+  const games = await library.scanFoldersAsync([roms], { fs: fakeLibFs(tree, real), platform: 'win32' });
   assert.equal(games.length, 1);
 });
 

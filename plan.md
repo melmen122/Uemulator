@@ -39,7 +39,7 @@ separation. So the plan is:
   Wine. The other five run on macOS, Linux and Windows.
 - **Windows x64**: the app builds as an NSIS installer and a portable zip (`npm run dist:win`, both
   unsigned). Core paths, PATH lookup, library folders and stop behaviour follow Windows rules (§3.4).
-  Windows is not yet tested on a real machine.
+  Unit tests (332) pass on Windows 11. The installer and bundled emulators are not yet run end to end there.
 
 ### Phase 2 (not in v1)
 - Embedded play: PyBoy runs headless in a Python bridge that streams frames into a `<canvas>`. mGBA
@@ -62,7 +62,7 @@ Uemulator/
   bundle-win/                 Windows x64 emulator bundle staging (gitignored; cache/ and emulators/)
   scripts/
     build-cores.mjs           `node scripts/build-cores.mjs [coreId...]` (per-core build + toolchain checks)
-    bundle-win.mjs            `npm run bundle:win`: pinned, SHA-256-checked Windows builds into bundle-win/emulators/
+    bundle-win.mjs            `npm run bundle:win`: pinned, SHA-256-checked Windows builds into bundle-win/emulators/ (or `--out <dir>`, e.g. `--out bin`)
   src/
     main/
       main.js                 app lifecycle, BrowserWindow (hardened), IPC registration
@@ -242,7 +242,7 @@ missing toolchain never fails the others.
 - Windows x64 support added: `win32` adapter paths (`cores/winpaths.js`), `.exe`-only core paths,
   taskkill stop, `window.uemu.platform`, and `%APPDATA%\uemulator\` data. The NSIS installer
   (per-user, choosable folder, desktop and Start menu shortcuts) and a portable zip are built by
-  `npm run dist:win`. Both are unsigned. Not yet run on a real Windows machine. `dist:win` first runs
+  `npm run dist:win`. Both are unsigned. Unit tests pass on Windows 11; the installer is not yet run end to end. `dist:win` first runs
   `bundle:win`, so the app ships official x64 builds of lichii, mgba, azahar and rpcs3 in
   `resources\emulators\`. That bundled set has not been run on Windows either.
 - Not yet done: embedded play (phase 2), prebuilt core installer, real-emulator launch tests (none of

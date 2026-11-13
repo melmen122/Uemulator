@@ -28,7 +28,7 @@ test('MANIFEST shape and pinned values', async () => {
   assert.deepEqual(MANIFEST.map((e) => e.id), ['lichii', 'mgba', 'azahar', 'rpcs3']);
   assert.deepEqual(MANIFEST.map((e) => e.exe), ['lichii.exe', 'mGBA.exe', 'azahar.exe', 'rpcs3.exe']);
   assert.deepEqual(MANIFEST.map((e) => e.format), ['zip', '7z', 'zip', '7z']);
-  assert.deepEqual(MANIFEST.map((e) => e.version), ['build-130', '0.10.5', '2126.2', '0.0.43-20574']);
+  assert.deepEqual(MANIFEST.map((e) => e.version), ['build-160', '0.10.5', '2126.2', '0.0.43-20574']);
   assert.equal(new Set(MANIFEST.map((e) => e.id)).size, 4);
   for (const e of MANIFEST) {
     assert.ok(Object.isFrozen(e), e.id);
@@ -41,10 +41,20 @@ test('MANIFEST shape and pinned values', async () => {
     assert.ok(e.file.endsWith('.' + e.format), e.id);
   }
   const by = Object.fromEntries(MANIFEST.map((e) => [e.id, e]));
-  assert.equal(by.lichii.file, 'lichii-windows-x86_64-pgo.zip');
-  assert.equal(by.lichii.sha256, 'e71515cea8009022b41f285d42483280f913869f0809869cfcd720da1a5de0b5');
+  assert.equal(by.lichii.file, 'lichii-windows-x86_64.zip');
+  assert.equal(by.lichii.url, 'https://github.com/zortos293/Lichii/releases/download/build-160/lichii-windows-x86_64.zip');
+  assert.equal(by.lichii.sha256, '215459edfbd9f6c542b4548cabf4c16d487feca8ce1003a1094f9beda5f02460');
   assert.equal(by.azahar.sha256, '4412eac8d13123c8840f11890fc26e5b0e4c76d16aa28a608941377b948a9db0');
   assert.equal(by.rpcs3.sha256, '12b36fbb6e0c44de8d8880d09d8b7c6d57a53b197741aae9948da0e82b54a7bc');
+});
+
+test('parseOutDir: default, --out <dir>, --out=<dir>, missing value throws', async () => {
+  const { parseOutDir } = await load();
+  assert.equal(parseOutDir([]), path.resolve(root, 'bundle-win/emulators'));
+  assert.equal(parseOutDir(['--out', 'bin']), path.resolve(root, 'bin'));
+  assert.equal(parseOutDir(['--out=bin']), path.resolve(root, 'bin'));
+  assert.throws(() => parseOutDir(['--out']), /--out needs a directory/);
+  assert.throws(() => parseOutDir(['--out', '--other']), /--out needs a directory/);
 });
 
 test('each manifest <id>/<exe> is where the win32 adapter looks in the bundled bin dir', async () => {
@@ -120,4 +130,134 @@ test('package.json wiring', () => {
 test('.gitignore ignores bundle-win/', () => {
   const lines = fs.readFileSync(path.join(root, '.gitignore'), 'utf8').split(/\r?\n/).map((l) => l.trim());
   assert.ok(lines.includes('bundle-win/'));
+});
+
+test('parseOutDir: absolute path is returned as-is; empty --out= throws', async () => {
+  const { parseOutDir } = await load();
+  const abs = path.resolve(os.tmpdir(), 'uemu-out');
+  assert.equal(parseOutDir(['--out', abs]), abs);
+  assert.equal(parseOutDir(['--out=' + abs]), abs);
+  assert.throws(() => parseOutDir(['--out=']), /--out needs a directory/);
+});
+
+test('tarCandidates: win32 is a single absolute System32 path, never a bare name', async () => {
+  const { tarCandidates } = await load();
+  assert.deepEqual(tarCandidates('win32', { SystemRoot: 'D:\\Win' }), ['D:\\Win\\System32\\tar.exe']);
+  assert.deepEqual(tarCandidates('win32', {}), ['C:\\Windows\\System32\\tar.exe']);
+  for (const env of [{}, { SystemRoot: 'D:\\Win' }, { SystemRoot: '' }]) {
+    const c = tarCandidates('win32', env);
+    assert.equal(c.length, 1);
+    for (const x of c) assert.ok(path.win32.isAbsolute(x), x);
+  }
+  assert.deepEqual(tarCandidates('linux', {}), ['bsdtar']);
+  assert.deepEqual(tarCandidates('darwin', {}), ['bsdtar']);
+});
+
+test('STAMP is the ownership marker filename', async () => {
+  const { STAMP } = await load();
+  assert.equal(typeof STAMP, 'string');
+  assert.ok(STAMP.length > 0 && !/[\/]/.test(STAMP));
+});
+
+test('canReplace: only absent or stamped dirs may be replaced (no exe fallback)', async () => {
+  const { canReplace, STAMP } = await load();
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'uemu-bw-'));
+  try {
+    assert.equal(canReplace(path.join(d, 'nope')), true);
+    assert.equal(canReplace(path.join(d, 'nope'), 'a.exe'), true);
+    const user = path.join(d, 'user');
+    fs.mkdirSync(user);
+    fs.writeFileSync(path.join(user, 'saves.dat'), 'x');
+    assert.equal(canReplace(user), false);
+    assert.equal(canReplace(user, 'a.exe'), false);
+    const stamped = path.join(d, 'stamped');
+    fs.mkdirSync(stamped);
+    fs.writeFileSync(path.join(stamped, STAMP), '{}');
+    assert.equal(canReplace(stamped), true);
+    assert.equal(canReplace(stamped, 'a.exe'), true);
+    const legacy = path.join(d, 'legacy');
+    fs.mkdirSync(legacy);
+    fs.writeFileSync(path.join(legacy, 'rpcs3.exe'), 'x');
+    assert.equal(canReplace(legacy), false);
+    assert.equal(canReplace(legacy, 'rpcs3.exe'), false);
+  } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+
+test('swapInto: backup-then-swap; user keep data wins, shipped-only files merged', async () => {
+  const { swapInto } = await load();
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'uemu-bw-'));
+  const w = (p, c) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, c); };
+  const rd = (p) => fs.readFileSync(p, 'utf8');
+  const noOld = (dest) => assert.deepEqual(
+    fs.readdirSync(path.dirname(dest)).filter((n) => n.startsWith(path.basename(dest) + '.old-')), []);
+  try {
+    // (a) dest absent
+    const ex1 = path.join(d, 'ex1'), dest1 = path.join(d, 'dest1');
+    w(path.join(ex1, 'new.exe'), 'N');
+    swapInto(ex1, dest1);
+    assert.equal(rd(path.join(dest1, 'new.exe')), 'N');
+    assert.equal(fs.existsSync(ex1), false);
+    noOld(dest1);
+
+    // (b) keep preserved, old files gone
+    const ex2 = path.join(d, 'ex2'), dest2 = path.join(d, 'dest2');
+    w(path.join(ex2, 'new.exe'), 'N2');
+    w(path.join(dest2, 'old.exe'), 'O');
+    w(path.join(dest2, 'config', 'x.txt'), 'mine');
+    swapInto(ex2, dest2, ['config']);
+    assert.equal(rd(path.join(dest2, 'new.exe')), 'N2');
+    assert.equal(fs.existsSync(path.join(dest2, 'old.exe')), false);
+    assert.equal(rd(path.join(dest2, 'config', 'x.txt')), 'mine');
+    assert.equal(fs.existsSync(ex2), false);
+    noOld(dest2);
+
+    // (c) keep dir in both: user wins, shipped-only merged
+    const ex3 = path.join(d, 'ex3'), dest3 = path.join(d, 'dest3');
+    w(path.join(ex3, 'config', 'shared.txt'), 'shipped');
+    w(path.join(ex3, 'config', 'shipped-only.txt'), 'S');
+    w(path.join(dest3, 'config', 'shared.txt'), 'mine');
+    w(path.join(dest3, 'config', 'user.yml'), 'U');
+    swapInto(ex3, dest3, ['config']);
+    assert.equal(rd(path.join(dest3, 'config', 'user.yml')), 'U');
+    assert.equal(rd(path.join(dest3, 'config', 'shared.txt')), 'mine');
+    assert.equal(rd(path.join(dest3, 'config', 'shipped-only.txt')), 'S');
+    noOld(dest3);
+
+    // (d) keep file in both: user wins
+    const ex5 = path.join(d, 'ex5'), dest5 = path.join(d, 'dest5');
+    w(path.join(ex5, 'qt.ini'), 'shipped');
+    w(path.join(ex5, 'new.exe'), 'N5');
+    w(path.join(dest5, 'qt.ini'), 'mine');
+    swapInto(ex5, dest5, ['qt.ini']);
+    assert.equal(rd(path.join(dest5, 'qt.ini')), 'mine');
+    assert.equal(rd(path.join(dest5, 'new.exe')), 'N5');
+    noOld(dest5);
+
+    // (e) keep names absent from dest ignored
+    const ex4 = path.join(d, 'ex4'), dest4 = path.join(d, 'dest4');
+    w(path.join(ex4, 'new.exe'), 'N4');
+    w(path.join(dest4, 'old.exe'), 'O');
+    assert.doesNotThrow(() => swapInto(ex4, dest4, ['config', 'user']));
+    assert.equal(rd(path.join(dest4, 'new.exe')), 'N4');
+    assert.equal(fs.existsSync(path.join(dest4, 'config')), false);
+    noOld(dest4);
+
+    // (f) failure rolls back: extractedDir missing
+    const dest6 = path.join(d, 'dest6');
+    w(path.join(dest6, 'dev_hdd0', 'save.dat'), 'SAVE');
+    w(path.join(dest6, 'rpcs3.exe'), 'E');
+    assert.throws(() => swapInto(path.join(d, 'does-not-exist'), dest6, ['dev_hdd0']));
+    assert.equal(rd(path.join(dest6, 'dev_hdd0', 'save.dat')), 'SAVE');
+    assert.equal(rd(path.join(dest6, 'rpcs3.exe')), 'E');
+    noOld(dest6);
+  } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+
+test('MANIFEST keep lists protect user data', async () => {
+  const { MANIFEST } = await load();
+  const by = Object.fromEntries(MANIFEST.map((e) => [e.id, e]));
+  for (const k of ['config', 'GuiConfigs', 'dev_hdd0', 'dev_flash']) assert.ok(by.rpcs3.keep.includes(k), k);
+  assert.ok(by.lichii.keep.includes('user'));
+  assert.ok(by.mgba.keep.includes('config.ini'));
+  assert.ok(by.mgba.keep.includes('qt.ini'));
 });
